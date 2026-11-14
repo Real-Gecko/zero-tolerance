@@ -3,13 +3,13 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace host {
 
 struct Options {
     std::string data = "data";
-    std::string rom = "rom/zt.bin";
-    std::string soundfont = "/usr/share/soundfonts/FluidR3_GM.sf2";
+    std::string soundfont; // default: gm.sf2 in data
     int scale = 3;
     std::string plan;   // test plan, same format as tools/mame/harness.lua
     bool headless = false; // no window, no audio, no frame pacing
@@ -25,5 +25,39 @@ bool init(const Options& o);
 // waits for the VBlank interrupt.
 void frame();
 void set_vblank_handler(void (*handler)());
+// The 68000 interrupt mask the game code sets: frame() runs the VBlank
+// handler only while it is below 6.
+extern int int_mask;
+// The pad buttons held, active high: bit 7 Start, 6 A, 5 C, 4 B, 3 Right,
+// 2 Left, 1 Down, 0 Up.
+uint8_t pad();
+// PC controls read by the player code (0xDAB8): the pad Left/Right bits held
+// through the strafe keys, and the mouse turn since the last call in player
+// angle units (512 per turn).
+uint8_t strafe_keys();
+int mouse_turn();
+// A key or button went down since the last call; skips the boot cinematics.
+bool any_pressed();
+// Set by a screen that can be shown wider than 320 pixels: called before the
+// wide render with the extra columns per side; VRAM is restored after it.
+extern void (*wide_screen)(int extra);
+// Menus of the PC additions (pause menu, save slots): drawn by the host over
+// whatever screen is shown, so VRAM is untouched. Items whose bit in enabled
+// is clear are dimmed.
+void menu_show(const std::string& title, const std::vector<std::string>& items, uint32_t enabled,
+               int selected);
+void menu_hide();
+// File of save slot 0-3.
+std::string save_path(int slot);
+// Esc was pressed since the last call (cleared on read). Set only for key
+// events; the game polls it where a menu makes sense.
+bool take_menu_request();
+// Keyboard text entry (the password field): while on, keys type instead of
+// working the pad; take_text() returns what was typed since the last call,
+// printable ASCII plus '\b' (Backspace), '\r' (Enter) and '\x1b' (Esc).
+void text_input(bool on);
+std::string take_text();
+// Recapture the mouse after the pause menu (Esc releases it).
+void capture_mouse();
 
 } // namespace host

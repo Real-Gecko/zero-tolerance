@@ -1,0 +1,80 @@
+# Sprite set (src/game/sprites.cpp), blocks in set_183B94.png.
+# "anim" starts an animation, "view" one of its views (1, 2, 4, 6 or 8, by
+# the angle it is seen from), each "part" one frame of the view: anchor x and
+# y (0 left/top, 1 centre, 2 right/bottom), block width and height (1/32 and
+# 1/16 of the scale), then rows of block numbers separated by "/", "m" = mirrored.
+anim
+view
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 2 3 / 10 9
+part 1 2 8 8: 4 5 / 11 12
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 6 7 / 8 13
+part 1 2 8 8: 14 15 / 12m 20
+view
+part 1 2 8 8: 36 37 / 42 42m
+part 1 2 8 8: 36 37 / 42 42m
+part 1 2 8 8: 36 37 / 42 42m
+part 1 2 8 8: 38 39 / 42 43
+part 1 2 8 8: 38 39 / 42 44
+part 1 2 8 8: 36 37 / 42 42m
+part 1 2 8 8: 36 37 / 43m 42m
+part 1 2 8 8: 40 41 / 43m 42m
+part 1 2 8 8: 40 41 / 44m 42m
+view
+part 1 2 8 8: 27 28 / 22m 21m
+part 1 2 8 8: 27 28 / 26m 29m
+part 1 2 8 8: 67 68 / 26m 25m
+part 1 2 8 8: 27 28 / 22m 21m
+part 1 2 8 8: 34 35 / 31m 30m
+part 1 2 8 8: 27 28 / 22m 21m
+part 1 2 8 8: 67 68 / 33m 32m
+part 1 2 8 8: 27 28 / 22m 21m
+part 1 2 8 8: 34 35 / 24m 23m
+view
+part 1 2 8 8: 28m 27m / 21 22
+part 1 2 8 8: 16 17 / 29 26
+part 1 2 8 8: 18 19 / 25 26
+part 1 2 8 8: 16 17 / 21 22
+part 1 2 8 8: 18 19 / 30 31
+part 1 2 8 8: 16 17 / 21 22
+part 1 2 8 8: 18 19 / 32 33
+part 1 2 8 8: 16 17 / 21 22
+part 1 2 8 8: 18 19 / 23 24
+anim
+view
+part 1 2 8 8: 57 58 / 8 9
+part 1 2 8 8: 57 58 / 8 9
+part 1 2 8 8: 57 58 / 8 9
+part 1 2 8 8: 57 58 / 10 9
+part 1 2 8 8: 65 5 / 11 12
+part 1 2 8 8: 57 58 / 8 9
+part 1 2 8 8: 57 58 / 8 9
+part 1 2 8 8: 57 58 / 8 13
+part 1 2 8 8: 66 15 / 12m 20
+anim
+view
+part 1 2 8 8: 59 60 / 8 9
+part 1 2 8 8: 59 60 / 8 9
+part 1 2 8 8: 59 60 / 8 9
+part 1 2 8 8: 59 60 / 10 9
+part 1 2 8 8: 61 62 / 11 12
+part 1 2 8 8: 59 60 / 8 9
+part 1 2 8 8: 59 60 / 8 9
+part 1 2 8 8: 59 60 / 8 13
+part 1 2 8 8: 63 64 / 12m 20
+anim
+view
+part 1 2 8 8: 45 46 / 51 52
+anim
+view
+part 1 2 8 8: 47 48 / 53 54
+anim
+view
+part 1 2 8 8: 49 50
+anim
+view
+part 1 2 8 8: 55 56

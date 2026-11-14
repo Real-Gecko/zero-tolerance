@@ -1,0 +1,12 @@
+# Sprite set (src/game/sprites.cpp), blocks in set_1CB96A.png.
+# "anim" starts an animation, "view" one of its views (1, 2, 4, 6 or 8, by
+# the angle it is seen from), each "part" one frame of the view: anchor x and
+# y (0 left/top, 1 centre, 2 right/bottom), block width and height (1/32 and
+# 1/16 of the scale), then rows of block numbers separated by "/", "m" = mirrored.
+anim
+view
+part 1 1 7 6: 0
+part 1 1 7 6: 1
+part 1 1 7 6: 2
+part 1 1 7 6: 0m
+part 1 1 7 6: 1m

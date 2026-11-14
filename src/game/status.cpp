@@ -1,19 +1,19 @@
 // Status display: the HUD set up at level start (0x29DA), the map screen
 // (0x2CEC), lighting modes (0x1D46), the backdrop slice (0xD494) and the face
 // animation (0x22BE, 0x23C2).
+#include "display.hpp"
 #include "game.hpp"
-#include "m68k.hpp"
 
 namespace game {
 
 namespace {
 
-void copy_longs(uint32_t src, int n) {
-    for (int i = 0; i < n; i++, src += 4) vdp_data32(rd32(src));
+void copy_tiles(uint16_t tile, const std::vector<uint8_t>& src, int nlongs) {
+    display::upload_tiles(tile, uint16_t(nlongs / 8), src.data());
 }
 
-void fill_ff(int n) {
-    for (int i = 0; i < n; i++) vdp_data32(0xFFFFFFFF);
+void fill_tile_ff(uint16_t tile) {
+    for (int i = 0; i < 64; i++) display::tiles[tile & 0x7FF][i] = 15;
 }
 
 // Iterations of `subq #1,d7; bmi skip; loop: ... dbra d7,loop` for d7 = n.
@@ -23,134 +23,102 @@ int dbra_count(int16_t n) {
 }
 
 void reset_queues() {
-    wr32(vdp_queue, 0xFFFFFFFF);
-    vdp_queue_ptr = vdp_queue;
-    U16{0xFF0042} = 1;
-    U32{0xFF003E} = 0xFF0044;
+    st.dma_count = 0;
+    st.sprite_link = 1;
+    st.sprite_end = 0;
 }
 
 } // namespace
 
 // 0x29DA: draws the HUD and the status area at the start of a level.
-void sub_0029DA() {
+void DrawHud() {
     WaitVBlank();
-    vdp_ctrl(0x8124);
     fb_dma_pending = 0;
-    sub_001A0C();
-    uint32_t pal;
-    if (U16{0xFF105E} == 0xFFFF)
-        pal = U16{0xFF271A} ? 0x21F2 : 0x20F2;
-    else
-        pal = U16{0xFF271A} ? 0x2172 : 0x2072;
-    vdp_ctrl32(0xC0000000);
-    copy_longs(pal, 32);
-    sub_000CAA();
-    sub_000C5A();
-    LoadImageRes(0x6B20, 0xC000, 0xE000, 0x1563E6);
-    vdp_ctrl32(0x0B100003);
-    U32{0xFF0DCC} = rd32(VDP_DATA);
-    sub_002CDC();
-    vdp_ctrl32(0x04CA0003);
-    uint16_t d0 = rd16(VDP_DATA);
-    sub_002CDC();
-    vdp_write_addr(uint16_t((d0 & 0x7FF) << 5));
-    fill_ff(8);
-    sub_00D98E();
-    sub_01E00E(U16{0xFF272E});
-    uint16_t face = U16{0xFF1030};
+    HideSprites();
+    const uint16_t* pal = game_palette(st.nv_slot != 0xFFFF, st.indoors);
+    for (int i = 0; i < 64; i++) display::pal[i] = pal[i];
+    ClearPlaneA();
+    ClearPlaneB();
+    LoadImageRes(0x6B20, 0xC000, 0xE000, kHudFrame);
+    VdpDelay();
+    uint16_t d0 = display::planeB[0x265];
+    VdpDelay();
+    fill_tile_ff(uint16_t(d0 & 0x7FF));
+    DrawHealthBar();
+    DrawEnemyCounter(st.enemies_left);
+    uint16_t face = st.character;
     if (face > 4) face = 0;
-    U16{0xFF1030} = face;
-    LoadImageRes(0x80A0, 0xC830, 0xE000, rd32(0x2CC8 + face * 4));
-    vdp_ctrl32(0x6E600002);
-    fill_ff(8);
-    copy_longs(0x16E758, 0x140);
-    vdp_ctrl32(0x68200000);
-    if (!U16{0xFF271A})
-        copy_longs(0x14F046, 0x1030);
-    else
-        copy_longs(0x154406, 0x3F8);
+    st.character = face;
+    LoadImageRes(0x80A0, 0xC830, 0xE000, kPortraits[face]);
+    fill_tile_ff(0x573);
+    copy_tiles(0x574, assets::tiles("screens/tiles/hud_AE60.png"), 0x140);
+    const assets::Tilemap& panorama = assets::tilemap(st.indoors ? "render/panorama_in.png" : "render/panorama_out.png");
+    display::upload_tiles(0x141, panorama.count(), panorama.tiles.data());
     uint16_t tile = 0x8001;
     for (uint16_t col = 0xC288; col < 0xC288 + 64; col += 2) {
         for (uint16_t a = col, i = 0; i < 10; i++, a = uint16_t(a + 0x80)) {
-            vdp_write_addr(a);
-            vdp_data(tile++);
+            display::write_cell(a, tile++);
         }
     }
-    vdp_ctrl32(0x68E00001);
-    copy_longs(0x15822E, 0x90);
-    vdp_ctrl32(0x62A00002);
-    copy_longs(0x16DA58, 0x180);
-    vdp_ctrl(0x8F80);
-    uint16_t d3 = U16{0xFF0DDE}, d4 = d3;
+    copy_tiles(0x347, assets::tiles("screens/tiles/hud_68E0.png"), 0x90);
+    copy_tiles(0x515, assets::tiles("screens/tiles/hud_A2A0.png", {{4, 2}}), 0x180);
+    uint16_t d3 = st.backdrop_col, d4 = d3;
     for (int i = 0; i < 0x2A; i++) {
         d3 &= 0xFF;
         d4 &= 0x7F;
-        vdp_write_addr(uint16_t(0xE000 + d4));
-        uint32_t a0 = U32{0xFF271E} + int16_t(d3);
+        uint16_t dest = uint16_t(0xE000 + d4);
+        const uint16_t* a0 = backdrop_map() + d3 / 2;
         d3 = uint16_t(d3 + 2);
         d4 = uint16_t(d4 + 2);
-        for (int j = 0; j < 16; j++, a0 += 0x100) vdp_data(rd16(a0));
+        for (int j = 0; j < 16; j++, a0 += 0x80) display::write_cell(uint16_t(dest + j * 0x80), *a0);
     }
-    vdp_ctrl(0x8F02);
-    vdp_ctrl32(0x40000010);
-    uint16_t vs = uint16_t(cur_level * 4 + (int16_t(uint16_t(U16{0xFF116E})) >> 5) - 0x20);
-    vdp_ctrl32(0x40000010);
-    vdp_data(vs);
-    vdp_ctrl32(0x7C000002);
-    vdp_data(uint16_t(U16{0xFF0E22} + 0x10));
-    U16{0xFF0EB8} = 1;
-    uint16_t mode = U16{0xFF0EB2};
-    U16{0xFF0EB2} = 0xFFFF;
-    sub_001D46(mode);
+    uint16_t vs = uint16_t(cur_level * 4 + (int16_t(uint16_t(st.stair_height)) >> 5) - 0x20);
+    display::vscrollA = vs;
+    display::hscrollA[0] = uint16_t(st.backdrop_scroll + 0x10);
+    st.radar_redraw = 1;
+    uint16_t mode = st.lighting;
+    st.lighting = 0xFFFF;
+    SetLighting(mode);
     reset_queues();
-    U16{0xFF06D4} = 2;
 }
 
 // 0x2CDC: short delay between VDP accesses.
-void sub_002CDC() {}
+void VdpDelay() {}
 
 // 0x2CEC: map screen (Start during gameplay); Up/Down change the map scale.
 // The link-game packet exchange (0x1C0F6, 0x1C52C) is not supported.
-void sub_002CEC() {
+void MapScreen() {
     fb_dma_pending = 0;
     WaitVBlank();
-    vdp_ctrl(0x8124);
-    sub_001A0C();
-    vdp_ctrl32(0xC07E0000);
-    vdp_data(0);
-    sub_0C633A();
-    sub_000CAA();
-    sub_000C5A();
-    LoadImageRes(0x2820, 0xE000, 0x6000, 0x12D43E);
-    vdp_ctrl32(0x73600000);
-    copy_longs(0x12E846, 0x90);
-    vdp_ctrl32(0x75A00000);
-    copy_longs(0x125116, 0x4B0);
-    vdp_ctrl32(0x48600001);
-    copy_longs(0x12EAA6, 0x120);
+    HideSprites();
+    display::pal[63] = 0;
+    // The original pauses GEMS here (0xC633A); the port keeps the music playing.
+    ClearPlaneA();
+    ClearPlaneB();
+    LoadImageRes(0x2820, 0xE000, 0x6000, kMapScreen);
+    copy_tiles(0x19B, assets::tiles("screens/tiles/mapscreen_extra.png"), 0x90);
+    copy_tiles(0x1AD, Font16Tiles(), 0x4B0);
+    copy_tiles(0x243, assets::tiles("screens/tiles/mapscreen_cells.png"), 0x120);
     uint16_t t = 0xE267;
     for (uint16_t row = 0xC518, i = 0; i < 16; i++, row = uint16_t(row + 0x80)) {
-        vdp_write_addr(row);
-        for (int j = 0; j < 16; j++) vdp_data(t++);
+        for (int j = 0; j < 16; j++) display::write_cell(uint16_t(row + j * 2), t++);
     }
-    vdp_ctrl32(0x40000010);
-    vdp_data(0);
-    vdp_data(0xFFFC);
-    vdp_ctrl32(0xC0400000);
-    copy_longs(0x1CDAE, 8);
-    sub_002FA0();
+    display::vscrollA = 0;
+    display::vscrollB = 0xFFFC;
+    for (int i = 0; i < 16; i++) display::pal[32 + i] = assets::palette("palettes/menu_font.png")[i];
+    DrawLevelMap();
     reset_queues();
-    U16{0xFF102A} = U16{0xFF272A};
-    sub_05755E(U16{0xFF102A});
-    U16{0xFF102C} = 0;
+    st.map_level = st.pw_level;
+    DrawMapLevelLines(st.map_level);
+    st.repeat[0] = st.repeat[1] = 0;
     WaitVBlank();
-    vdp_ctrl(0x8164);
-    U8 rep_up{0xFF102C}, rep_down{0xFF102D};
-    U8 prev{0xFF0032};
+    auto& rep_up = st.repeat[0];
+    auto& rep_down = st.repeat[1];
+    auto& prev = st.pad_prev;
     do {
         WaitVBlank();
-        sub_00079A();
-        sub_000D36();
+        RunDmaQueue();
+        ReadInput();
         bool step = false;
         if (pad_buttons & 1) {
             if (!(prev & 1)) {
@@ -164,12 +132,12 @@ void sub_002CEC() {
                 }
             }
             if (step) {
-                if (U16{0xFF102A} == 0)
+                if (st.map_level == 0)
                     rep_up = 0;
                 else {
-                    U16{0xFF102A} = uint16_t(U16{0xFF102A} - 1);
-                    sub_05755E(U16{0xFF102A});
-                    sub_00D760(0x6B);
+                    st.map_level = uint16_t(st.map_level - 1);
+                    DrawMapLevelLines(st.map_level);
+                    PlaySoundLocal(0x6B);
                 }
             }
         } else
@@ -187,61 +155,63 @@ void sub_002CEC() {
                 }
             }
             if (step) {
-                if (U16{0xFF102A} == U16{0xFF272A})
+                if (st.map_level == st.pw_level)
                     rep_down = 0;
                 else {
-                    U16{0xFF102A} = uint16_t(U16{0xFF102A} + 1);
-                    sub_05755E(U16{0xFF102A});
-                    sub_00D760(0x6B);
+                    st.map_level = uint16_t(st.map_level + 1);
+                    DrawMapLevelLines(st.map_level);
+                    PlaySoundLocal(0x6B);
                 }
             }
         } else
             rep_down = 0;
-        U16{0xFF0042} = 1;
-        U32{0xFF003E} = 0xFF0044;
-        if (U8{0xFF0001} & 0x10) {
-            uint32_t a2 = U32{0xFF003E};
-            wr16(a2, uint16_t((int16_t(uint16_t(player_y)) >> 6) + 0xD1));
-            wr16(a2 + 2, U16{0xFF0042});
-            U16{0xFF0042} = uint16_t(U16{0xFF0042} + 1);
-            wr16(a2 + 4, 0xE19D);
-            wr16(a2 + 6, uint16_t((int16_t(uint16_t(player_x)) >> 6) + 0xDD));
-            U32{0xFF003E} = a2 + 8;
+        st.sprite_link = 1;
+        st.sprite_end = 0;
+        if (uint8_t(st.vblank_count) & 0x10) {
+            st.sprites[st.sprite_end++] = {uint16_t((int16_t(uint16_t(player_y)) >> 6) + 0xD1), st.sprite_link, 0xE19D,
+                                           uint16_t((int16_t(uint16_t(player_x)) >> 6) + 0xDD)};
+            st.sprite_link = uint16_t(st.sprite_link + 1);
         }
-        sub_001D18();
-        wr32(vdp_queue_ptr, 0xFFFFFFFF);
-        U8 map_flags{0xFF06D6};
+        QueueSpriteListDma();
+        auto& map_flags = st.map_request;
         if ((map_flags & 1) && (pad_buttons & 0x80) && !(prev & 0x80)) {
             map_flags = uint8_t(map_flags & ~1);
-            wr8(0xFF0FFA, 0x15);
-            sub_01C03A(0xFF0FFA);
         }
-    } while (U8{0xFF06D6});
-    sub_0C6344();
-    sub_0029DA();
+    } while (st.map_request);
+    DrawHud();
 }
 
-// 0x2FA0: draws the level map (16x16 cells of 2x2 tiles from the table at
-// 0x3372) and the level name.
-void sub_002FA0() {
-    vdp_ctrl32(0x4CE00001);
-    uint32_t a0 = cur_map_ptr;
-    auto cell = [](uint32_t a) { return rd32(0x3372 + sub_00E238(rd8(cell_class + rd8(a))) * 4); };
+// 0x2FA0: draws the level map (16x16 cells of 2x2 tiles, 4x4 pixels of
+// mapscreen_extra per collision shape, table 0x3372) and the level name.
+void DrawLevelMap() {
+    static const uint8_t shape_pixels[8] = {0x00, 0x02, 0x10, 0x12, 0x20, 0x22, 0x30, 0x32};
+    const uint8_t* pixels = assets::tiles("screens/tiles/mapscreen_extra.png").data();
+    uint16_t tile = 0x4CE0 >> 5;
+    int wi = 0;
+    Cell a0 = cur_map;
+    auto cell = [&](Cell a) { return pixels + shape_pixels[CollisionShape(st.cell_class[map_cell(a)])]; };
     for (int y = 0; y < 16; y++, a0 += 0x20) {
         for (int x = 0; x < 16; x++, a0 += 2) {
             for (int row = 0; row < 0x21; row += 0x20) {
-                uint32_t a1 = cell(a0 + row), a2 = cell(a0 + row + 1);
+                const uint8_t *a1 = cell(a0 + row), *a2 = cell(a0 + row + 1);
                 for (int i = 0; i < 4; i++, a1 += 4, a2 += 4) {
-                    vdp_data(rd16(a1));
-                    vdp_data(rd16(a2));
+                    display::tile_word(tile, wi, be16(a1));
+                    if (++wi == 16) {
+                        tile++;
+                        wi = 0;
+                    }
+                    display::tile_word(tile, wi, be16(a2));
+                    if (++wi == 16) {
+                        tile++;
+                        wi = 0;
+                    }
                 }
             }
         }
     }
-    vdp_ctrl32(0x4D180003);
-    uint32_t name = 0x30B2 + uint16_t((cur_area * 16 + cur_level) * 16);
+    const std::string& name = assets::list("text/levelnames.txt")[cur_area * 16 + cur_level];
     for (int i = 0; i < 16; i++) {
-        uint8_t c = rd8(name + i);
+        uint8_t c = uint8_t(name[i]);
         uint16_t t;
         if (c < 0x30)
             t = 0x8000;
@@ -249,73 +219,72 @@ void sub_002FA0() {
             t = uint16_t(c - 0x30 + 0xE243);
         else
             t = uint16_t(uint8_t(c - 0x41) + 0xE24D);
-        vdp_data(t);
+        display::write_cell(uint16_t(0xCD18 + i * 2), t);
     }
 }
 
 // 0x1D46: sets the lighting mode (FF0EB2), or only records it while FF105E >= 0.
 // Returns d0.
-uint16_t sub_001D46(uint16_t mode) {
-    if (int16_t(uint16_t(U16{0xFF105E})) >= 0) {
-        U16{0xFF0EB2} = mode;
-        return sub_011286();
+uint16_t SetLighting(uint16_t mode) {
+    if (int16_t(uint16_t(st.nv_slot)) >= 0) {
+        st.lighting = mode;
+        return NightVisionOn();
     }
-    if (int16_t(uint16_t(U16{0xFF1060})) < 0) return sub_001D66(mode);
-    uint16_t d0 = sub_001D66(mode);
-    U16{0xFF0EB4} = 0x10;
+    if (int16_t(uint16_t(st.light_slot)) < 0) return ApplyLighting(mode);
+    uint16_t d0 = ApplyLighting(mode);
+    st.visibility = 0x10;
     return d0;
 }
 
-// 0x1D66: switches to lighting mode d0 (0-4, others mean 0): wall shade
-// tables FF0E8A-FF0EAA, backdrop FF0EAE, FF0EB4 and FF1096. Returns d0.
-uint16_t sub_001D66(uint16_t mode) {
+// 0x1D66: switches to lighting mode d0 (0-4, others mean 0): wall shades
+// FF0E8A-FF0EAA, backdrop FF0EAE, FF0EB4 and FF1096. Returns d0.
+uint16_t ApplyLighting(uint16_t mode) {
     if (mode > 4) mode = 0;
-    if (mode == U16{0xFF0EB2}) return mode;
-    U16{0xFF0EB2} = mode;
+    if (mode == st.lighting) return mode;
+    st.lighting = mode;
+    st.backdrop_image = uint8_t(mode);
     if (mode == 0) {
-        U32{0xFF0EAA} = 0x4436;
-        U32{0xFF0EAE} = 0x14EE66;
-        U16{0xFF0EB4} = 0x10;
-        U32{0xFF1096} = 0xED50;
+        st.walls_shaded = 0;
+        st.visibility = 0x10;
+        st.sprite_shades = 0;
     } else {
-        static const uint32_t backdrop[] = {0x14ED26, 0x14EDC6, 0x14EF06, 0x14EFA6};
-        uint32_t shade = mode == 2 ? 0x3B92 : 0x3392;
-        for (uint32_t a = 0xFF0E8A; a < 0xFF0EAA; a += 4, shade += 0x100) U32{a} = shade;
-        U32{0xFF0EAA} = 0x4392;
-        U32{0xFF0EAE} = backdrop[mode - 1];
-        U16{0xFF0EB4} = mode == 3 ? 0xC : 5;
-        U32{0xFF1096} = mode == 2 ? 0xED78 : 0xED64;
+        st.wall_shade = mode == 2 ? 8 : 0;
+        st.walls_shaded = 1;
+        st.visibility = mode == 3 ? 0xC : 5;
+        st.sprite_shades = mode == 2 ? 2 : 1;
     }
-    return sub_00D494();
+    return BuildBackdrop();
 }
 
-// 0xD494: rebuilds the backdrop (two 80-byte rows at FF6226/FF6276) from the
-// image at FF0EAE, shifted by FF0E1A. Returns d0.
-uint16_t sub_00D494() {
-    uint16_t d0 = U16{0xFF0E1A};
-    U16{0xFF0E1E} = d0;
+// 0xD494: rebuilds the backdrop (st.gradient, two 80-byte rows) from the
+// rows of FF0EAE, shifted by FF0E1A. Returns d0.
+uint16_t BuildBackdrop() {
+    uint16_t d0 = st.view_z;
+    st.backdrop_z = d0;
     const int16_t d5 = 0x28;
-    uint32_t a5 = U32{0xFF0EAE};
+    const uint8_t* a5 = assets::hex("render/backgrounds.txt").data() + st.backdrop_image * 0xA0;
+    uint8_t* g = st.gradient;
     if (d0 == 0) {
-        for (uint32_t a4 = 0xFF6226; a4 < 0xFF6226 + 0xA0; a4 += 4, a5 += 4) wr32(a4, rd32(a5));
+        for (int i = 0; i < 0xA0; i++) g[i] = a5[i];
         return 0;
     }
     int16_t n = int16_t(d0);
     if (n > 0) {
-        uint32_t a4 = 0xFF6226, a3 = a5 + 0x50, a2 = a4 + 0x50;
-        uint32_t saved = a5;
+        int a4 = 0, a2 = 0x50;
+        const uint8_t* a3 = a5 + 0x50;
+        const uint8_t* saved = a5;
         n = int16_t(n + (n >> 2));
         int16_t d1 = int16_t(d5 - n);
-        uint8_t d3 = rd8(a5), d4 = rd8(a3);
+        uint8_t d3 = *a5, d4 = *a3;
         for (int i = dbra_count(n); i > 0; i--) {
-            wr8(a4++, d3);
-            wr8(a2++, d4);
+            g[a4++] = d3;
+            g[a2++] = d4;
         }
         {
             int16_t d2 = int16_t(-d1);
             for (int i = dbra_count(d1); i > 0; i--) {
-                wr8(a4++, rd8(a5++));
-                wr8(a2++, rd8(a3++));
+                g[a4++] = *a5++;
+                g[a2++] = *a3++;
                 d2 = int16_t(d2 + d5 - d1);
                 while (d2 >= 0) {
                     a5++;
@@ -329,8 +298,8 @@ uint16_t sub_00D494() {
         n = int16_t(n + d5);
         int16_t d2 = int16_t(-n);
         for (int i = 0; i < 0x28; i++) {
-            wr8(a4++, rd8(a5));
-            wr8(a2++, rd8(a3));
+            g[a4++] = *a5;
+            g[a2++] = *a3;
             d2 = int16_t(d2 + d5);
             while (d2 >= 0) {
                 a5++;
@@ -340,21 +309,22 @@ uint16_t sub_00D494() {
         }
     } else {
         a5 += 0x50;
-        uint32_t a4 = 0xFF6276, a3 = a5 + 0x50, a2 = a4 + 0x50;
-        uint32_t saved = a5;
+        int a4 = 0x50, a2 = 0xA0;
+        const uint8_t* a3 = a5 + 0x50;
+        const uint8_t* saved = a5;
         n = int16_t(-n);
         n = int16_t(n + (n >> 2));
         int16_t d1 = int16_t(d5 - n);
-        uint8_t d3 = rd8(a5 - 1), d4 = rd8(a3 - 1);
+        uint8_t d3 = a5[-1], d4 = a3[-1];
         for (int i = dbra_count(n); i > 0; i--) {
-            wr8(--a4, d3);
-            wr8(--a2, d4);
+            g[--a4] = d3;
+            g[--a2] = d4;
         }
         {
             int16_t d2 = int16_t(-d1);
             for (int i = dbra_count(d1); i > 0; i--) {
-                wr8(--a4, rd8(--a5));
-                wr8(--a2, rd8(--a3));
+                g[--a4] = *--a5;
+                g[--a2] = *--a3;
                 d2 = int16_t(d2 + d5 - d1);
                 while (d2 >= 0) {
                     a5--;
@@ -368,8 +338,8 @@ uint16_t sub_00D494() {
         n = int16_t(n + d5);
         int16_t d2 = int16_t(-n);
         for (int i = 0; i < 0x28; i++) {
-            wr8(--a4, rd8(a5));
-            wr8(--a2, rd8(a3));
+            g[--a4] = *a5;
+            g[--a2] = *a3;
             d2 = int16_t(d2 + d5);
             while (d2 >= 0) {
                 a5--;
@@ -381,59 +351,57 @@ uint16_t sub_00D494() {
     return uint16_t(n);
 }
 
-// 0xD49A: sub_00D494 when FF0E1A changed. Returns d0.
-uint16_t sub_00D49A() {
-    if (U16{0xFF0E1A} == U16{0xFF0E1E}) return U16{0xFF0E1A};
-    return sub_00D494();
+// 0xD49A: BuildBackdrop when FF0E1A changed. Returns d0.
+uint16_t UpdateBackdrop() {
+    if (st.view_z == st.backdrop_z) return st.view_z;
+    return BuildBackdrop();
 }
 
 // 0x22BE: animates one of the three HUD faces per call (blinking/eye frames
-// from 0x154106-0x154306, timers FF0DD2/FF0DD6/FF0DDA).
-void sub_0022BE() {
-    U8 turn{0xFF0DD0};
+// of hud_face_frames, 8 tiles per face, timers st.face).
+void AnimateFaces() {
+    auto& turn = st.face_turn;
     turn = uint8_t(turn - 1);
-    uint32_t a1, a0;
+    const uint8_t* a1 = assets::tiles("screens/tiles/hud_face_frames.png").data();
     uint16_t d4, d3;
+    int k;
     if (int8_t(uint8_t(turn)) < 0) {
-        a1 = 0x154306, d4 = 0x3040, d3 = 0x3D00, a0 = 0xFF0DD2;
+        a1 += 0x200, d4 = 0x3040, d3 = 0x3D00, k = 0;
         turn = 2;
     } else if (turn == 0) {
-        a1 = 0x154206, d4 = 0x2E40, d3 = 0x2E60, a0 = 0xFF0DD6;
+        a1 += 0x100, d4 = 0x2E40, d3 = 0x2E60, k = 1;
     } else {
-        a1 = 0x154106, d4 = 0x2960, d3 = 0x2980, a0 = 0xFF0DDA;
+        d4 = 0x2960, d3 = 0x2980, k = 2;
     }
-    uint8_t t = uint8_t(rd8(a0) - 1);
-    wr8(a0, t);
-    if (int8_t(t) < 0) {
-        wr8(a0, uint8_t(t + 8));
-        wr8(a0 + 1, uint8_t(rd8(a0 + 1) + 0x40));
-        wr16(a0 + 2, uint16_t(Random() >> 16) & 0x38);
+    FaceTimer& f = st.face[k];
+    f.time = uint8_t(f.time - 1);
+    if (int8_t(f.time) < 0) {
+        f.time = uint8_t(f.time + 8);
+        f.frame = uint8_t(f.frame + 0x40);
+        f.phase = uint16_t(Random() >> 16) & 0x38;
     }
-    a1 += rd8(a0 + 1);
-    uint16_t d0 = rd8(0x2382 + (uint8_t(rd16(a0 + 2) + rd8(a0)) & 0x3F));
+    a1 += f.frame;
+    uint16_t d0 = kFaceAnim[uint8_t(f.phase + f.time) & 0x3F];
     a1 += d0;
-    vdp_write_addr(uint16_t(d4 + d0));
-    vdp_data32(rd32(a1));
-    vdp_write_addr(uint16_t(d3 + d0));
-    vdp_data32(rd32(a1 + 0x20));
+    display::tile_long(uint16_t(d4 + d0), be32(a1));
+    display::tile_long(uint16_t(d3 + d0), be32(a1 + 0x20));
 }
 
-// 0x23C2: runs the face animation scripts in the list at FFBCD6, writing
-// words into face_desc (FF63C6).
-void sub_0023C2() {
-    U16{0xFF0EB6} = uint16_t(U16{0xFF0EB6} + 1);
-    uint32_t a0 = 0xFFBCD6;
-    while (uint16_t d3 = rd16(a0)) {
-        uint8_t t = uint8_t(rd8(a0 + 2) - 1);
-        wr8(a0 + 2, t);
-        if (t == 0) {
-            wr8(a0 + 2, rd8(a0 + 3));
-            uint32_t a2 = a0 + int16_t(rd16(a0 + 4));
-            for (int16_t off; (off = int16_t(rd16(a2))) >= 0; a2 += 4)
-                wr16(0xFF63C6 + off, rd16(a2 + 2));
-            wr16(a0 + 4, rd16(a2 + 2));
-        }
-        a0 += int16_t(d3);
+// 0x23C2: runs the face animation scripts (st.face_scripts), writing words
+// into st.faces. A record: u16 length, timer, reload, u16 offset of the next
+// frame: (u16 faces byte offset, u16 word) pairs ending in a negative offset,
+// then the offset of the frame after it.
+void RunFaceScripts() {
+    st.frame = uint16_t(st.frame + 1);
+    uint8_t* s = st.face_scripts;
+    auto word = [&](int i) { return uint16_t(s[i] << 8 | s[i + 1]); };
+    for (int a0 = 0; uint16_t len = word(a0); a0 += int16_t(len)) {
+        if (--s[a0 + 2]) continue;
+        s[a0 + 2] = s[a0 + 3];
+        int a2 = a0 + int16_t(word(a0 + 4));
+        for (int16_t off; (off = int16_t(word(a2))) >= 0; a2 += 4) st.faces[off >> 1] = word(a2 + 2);
+        s[a0 + 4] = s[a2 + 2];
+        s[a0 + 5] = s[a2 + 3];
     }
 }
 

@@ -1,8 +1,10 @@
 // Player movement, collision and cell interaction.
 #include "game.hpp"
 
+#include <algorithm>
 #include <initializer_list>
 
+#include "../host.hpp"
 #include "m68k.hpp"
 #include "render.hpp"
 
@@ -10,94 +12,92 @@ namespace game {
 
 namespace {
 
-U16 height{0xFF116E}; // view height offset on stairs
-U16 lift{0xFF1170};   // 1 going down, -1 going up, 2 / -2 arrived
+auto& height = st.stair_height; // view height offset on stairs
+auto& lift = st.lift;   // 1 going down, -1 going up, 2 / -2 arrived
 
 // 0xE634
-void h_00E634() { U16{0xFF2722} = 1; }
+void ExitCell() { st.level_exit = 1; }
 
 // 0xE662: hazard cell: pushes the player towards the cell centre and hurts.
-void h_00E662() {
+void HazardCell() {
     uint16_t d0 = uint16_t((player_x & 0xFF00) | 0x80) - player_x;
     uint16_t d1 = uint16_t((player_y & 0xFF00) | 0x80) - player_y;
     uint16_t d3 = d0, d4 = d1;
     d0 = Distance(int16_t(d0), int16_t(d1));
-    bool sound = int16_t(uint16_t(U16{0xFF1066})) < 0;
-    sub_00D7DC(d0, d3, d4);
-    if (sound) sub_00D760(0x1B);
+    bool sound = int16_t(uint16_t(st.shield_slot)) < 0;
+    HitPlayerIgnoreArmour(d0, d3, d4);
+    if (sound) PlaySoundLocal(0x1B);
 }
 
 // Lift cells: the first ride on the level shows message 0x1E67A.
 void lift_message() {
-    if (!U16{0xFF272C} && U16{0xFF272A} == cur_level) sub_01E0C2(0x1E67A);
+    if (!st.cleared_timer && st.pw_level == cur_level) QueueMessage(Msg::FloorNotSecured);
 }
 
 void lift_music() {
     if (last_sound == 0x88) return;
-    sub_0C62E8();
+    StopMusic();
     PlaySound(0x88);
 }
 
 // 0xE69E: lift down.
-void h_00E69E() {
+void LiftDown() {
     lift_message();
     if (height) return;
     lift_music();
     lift = 1;
-    sub_00D760(0x6F);
+    PlaySoundLocal(0x6F);
 }
 
 // 0xE6FE: lift up.
-void h_00E6FE() {
+void LiftUp() {
     lift_message();
     if (height) return;
     lift_music();
     lift = 0xFFFF;
-    sub_00D760(0x6F);
+    PlaySoundLocal(0x6F);
 }
 
 // 0xE75E: lift, keeps the direction of a ride going up.
-void h_00E75E() {
+void LiftContinue() {
     lift_message();
     if (height) return;
     lift_music();
     lift = int16_t(uint16_t(lift)) < 0 ? 0xFFFF : 1;
-    sub_00D760(0x6F);
+    PlaySoundLocal(0x6F);
 }
 
 // 0xE7D6: lift stop.
-void h_00E7D6() {
+void LiftStop() {
     if (last_sound == 0x88) {
-        sub_0C62E8();
+        StopMusic();
         PlaySound(cur_area);
     }
     if (lift) lift = int16_t(uint16_t(lift)) < 0 ? 0xFFFE : 2;
     height = 0;
 }
 
-// Picked-up cells outside the map buffer clear a dummy byte.
-uint32_t pickup_cell(uint32_t a0) { return a0 >= 0xFF7CD6 && a0 < 0xFFBCD6 ? a0 : 0xFFCCD6; }
-
 // 0x11B2A: item d0 (weapon or ammo) goes into the inventory if there is room.
-void take_item(uint16_t d0, uint32_t a0) {
-    if (sub_011084(d0)) return;
-    a0 = pickup_cell(a0);
-    wr8(a0, 0);
-    sub_01C9A0(a0);
-    sub_00D760(0x69);
-    sub_01E0C2(rd32(0x1EF14 + d0 * 4));
+void take_item(uint16_t d0, Cell a0) {
+    if (AddWeapon(d0)) return;
+    put_cell(a0, 0);
+    PlaySoundLocal(0x69);
+    // Table 0x1EF14
+    static const Msg msgs[15] = {Msg::Blank, Msg::BioScanner, Msg::Mine, Msg::Vest, Msg::Extinguisher,
+                                 Msg::FireSuit, Msg::FlashLight, Msg::HandGrenade, Msg::Handgun,
+                                 Msg::NightVision, Msg::LaserGun, Msg::RocketLauncher, Msg::Shotgun,
+                                 Msg::FlameThrower, Msg::PulseLaser};
+    QueueMessage(msgs[d0]);
 }
 
 // 0x11B7C: medikit.
-void take_medikit(uint32_t a0) {
-    if (U16{0xFF0DE4} == 0x64) return;
-    a0 = pickup_cell(a0);
-    wr8(a0, 0);
-    sub_01C9A0(a0);
-    sub_00D760(0x6A);
-    sub_01E0C2(0x1E5C2);
-    U16{0xFF0DE4} += U16{0xFF1030} == 2 ? 0x28 : 0x14;
-    sub_00D98E();
+void take_medikit(Cell a0) {
+    if (st.health == 0x64) return;
+    put_cell(a0, 0);
+    PlaySoundLocal(0x6A);
+    QueueMessage(Msg::Medipack);
+    st.health += st.character == 2 ? 0x28 : 0x14;
+    DrawHealthBar();
 }
 
 // 0xA33A / 0xA38C: pulls the player towards the cell centre when closer than
@@ -113,276 +113,236 @@ void pull_to_centre(uint16_t range, uint16_t mul) {
 }
 
 // 0xA3DE
-void h_00A3DE() {
-    U16{0xFF0E1A} = uint16_t(int16_t(uint16_t(U16{0xFF0E1A})) >> 1);
-    U16{0xFF0E1C} = 0;
-    U16{0xFF0E20} = 0;
+void StopJump() {
+    st.view_z = uint16_t(int16_t(uint16_t(st.view_z)) >> 1);
+    st.view_z_target = 0;
+    st.jump_speed = 0;
 }
 
 // 0xA3EC: keeps the player away from the cell edges while the view is high.
-void h_00A3EC() {
+void KeepFromCellEdges() {
     int16_t h = int16_t(uint16_t(height));
     if ((h < 0 ? uint16_t(-h) : uint16_t(h)) < 0x18) return;
     bool moved = false;
     uint8_t x = uint8_t(player_x);
-    if (x < 0x20) wr8(0xFF0DED, 0x20), moved = true;
-    else if (x > 0xDF) wr8(0xFF0DED, 0xDF), moved = true;
+    if (x < 0x20) set_low_byte(player_x, 0x20), moved = true;
+    else if (x > 0xDF) set_low_byte(player_x, 0xDF), moved = true;
     uint8_t y = uint8_t(player_y);
-    if (y < 0x20) wr8(0xFF0DEF, 0x20), moved = true;
-    else if (y > 0xDF) wr8(0xFF0DEF, 0xDF), moved = true;
+    if (y < 0x20) set_low_byte(player_y, 0x20), moved = true;
+    else if (y > 0xDF) set_low_byte(player_y, 0xDF), moved = true;
     if (!moved) return;
-    U16{0xFF0E82} = 0;
-    U16{0xFF0E86} = 0;
-    U16{0xFF0DF0} = 0;
-    U16{0xFF0DF2} = 0;
+    st.speed = 0;
+    st.strafe = 0;
+    st.push_x = 0;
+    st.push_y = 0;
 }
 
 // 0xA456 / 0xA472 / 0xA48E / 0xA4AA: on a stair cell, keeps the player on
-// one half of the cell along the stairs (pos = low byte of player_y or _x).
-void stair_half(uint32_t pos, bool high_half) {
-    h_00A3DE();
-    if (bool(rd8(pos) & 0x80) != high_half) wr8(pos, 0x80);
+// one half of the cell along the stairs (pos = player_y or _x).
+void stair_half(uint16_t& pos, bool high_half) {
+    StopJump();
+    if (bool(pos & 0x80) != high_half) set_low_byte(pos, 0x80);
 }
 
-uint8_t cls_at(uint32_t a0) { return rd8(cell_class + rd8(a0)); }
+uint8_t cls_at(Cell a0) { return st.cell_class[map_cell(a0)]; }
 
 // 0xA4C6 / 0xA4EC
-void h_00A4C6(uint32_t a0) {
-    if (cls_at(a0 + 1) == 0x17) stair_half(0xFF0DEF, true);
-    else if (cls_at(a0 - 1) == 0x3F) stair_half(0xFF0DEF, false);
-    else if (cls_at(a0 + 0x20) == 0x47) stair_half(0xFF0DED, false);
-    else stair_half(0xFF0DED, true);
+void StairCornerA(Cell a0) {
+    if (cls_at(a0 + 1) == 0x17) stair_half(player_y, true);
+    else if (cls_at(a0 - 1) == 0x3F) stair_half(player_y, false);
+    else if (cls_at(a0 + 0x20) == 0x47) stair_half(player_x, false);
+    else stair_half(player_x, true);
 }
 
-void h_00A4EC(uint32_t a0) {
-    if (cls_at(a0 - 1) == 0x17) stair_half(0xFF0DEF, true);
-    else if (cls_at(a0 + 1) == 0x3F) stair_half(0xFF0DEF, false);
-    else if (cls_at(a0 - 0x20) == 0x47) stair_half(0xFF0DED, false);
-    else stair_half(0xFF0DED, true);
+// 0xA4EC
+void StairCornerB(Cell a0) {
+    if (cls_at(a0 - 1) == 0x17) stair_half(player_y, true);
+    else if (cls_at(a0 + 1) == 0x3F) stair_half(player_y, false);
+    else if (cls_at(a0 - 0x20) == 0x47) stair_half(player_x, false);
+    else stair_half(player_x, true);
 }
 
-// Door list FF0EC6..FF0FA6 (end pointer FF0EC2), 14-byte entries: +0 map
-// cell, +4 opening 0..0x80, +6 cell value to restore, +8 / +A cell x / y,
-// +C mode (0 closes when free, 1 stays, 2 opens fully), +D level.
-U32 door_end{0xFF0EC2};
-
-// 0xB30C: sends a door to the other console.
-void sub_00B30C(uint32_t a3) {
-    wr8(0xFF0FFA, 0x0A);
-    wr8(0xFF0FFB, rd8(a3 + 0xD));
-    wr8(0xFF0FFC, rd8(a3 + 8));
-    wr8(0xFF0FFD, rd8(a3 + 0xA));
-    wr32(0xFF0FFE, rd32(a3));
-    wr8(0xFF1002, rd8(a3 + 5));
-    sub_01C03A(0xFF0FFA);
+// 0xB25E / 0xB29A: door cells; the cell becomes the open door, the first
+// cell of class 0x2D / 0x2E (FF62F3 / FF62F4).
+void open_door(Cell a0, uint8_t open_class) {
+    if (st.door_count == 16) return;
+    Door& d = st.doors[st.door_count++];
+    d.cell = a0;
+    d.opening = 0x20;
+    d.restore = map_cell(a0);
+    put_cell(a0, st.class_cell[open_class]);
+    st.radar_redraw = 1;
+    d.x = player_x & 0xFF00;
+    d.y = player_y & 0xFF00;
+    d.mode = 0;
+    d.level = uint8_t(st.cur_level);
+    PlaySoundLocal(0x67);
 }
 
-// 0xB25E / 0xB29A: door cells; the cell becomes the open door FF62F3 / FF62F4.
-void open_door(uint32_t a0, uint32_t open_cell) {
-    uint32_t a3 = door_end;
-    if (a3 == 0xFF0FA6) return;
-    wr32(a3, a0);
-    wr16(a3 + 4, 0x20);
-    wr16(a3 + 6, rd8(a0));
-    a0 = pickup_cell(a0);
-    wr8(a0, rd8(open_cell));
-    sub_01C9A0(a0);
-    U16{0xFF0EB8} = 1;
-    wr16(a3 + 8, player_x & 0xFF00);
-    wr16(a3 + 0xA, player_y & 0xFF00);
-    wr8(a3 + 0xC, 0);
-    wr8(a3 + 0xD, rd8(0xFF1029));
-    sub_00D760(0x67);
-    door_end = a3 + 0xE;
-    if (link_mode) sub_00B30C(a3);
-}
-
-void h_00B25E(uint32_t a0) { open_door(a0, 0xFF62F3); }
-void h_00B29A(uint32_t a0) { open_door(a0, 0xFF62F4); }
+void OpenDoorA(Cell a0) { open_door(a0, 0x2D); } // 0xB25E
+void OpenDoorB(Cell a0) { open_door(a0, 0x2E); } // 0xB29A
 
 // 0xB1C4 / 0xB202 (enemies) and 0xB130 / 0xB168 (the boss cell): door cell
 // a0 opens; the entry gets the cell position (d0, d1), the player's level
-// and, for the boss cell, kind 2 and no old cell byte. With the list full,
-// 0xB202 still writes the second half of an entry past its end.
-void other_open_door(uint32_t a0, uint32_t open_cell, uint16_t d0, uint16_t d1, bool when_full, uint8_t kind) {
-    uint32_t a3 = door_end;
-    if (a3 == 0xFF0FA6) {
-        if (!when_full) return;
-        a3 -= 8;
-    } else {
-        wr32(a3, a0);
-        wr16(a3 + 4, 0x20);
-        wr16(a3 + 6, kind ? 0 : rd8(a0));
-        a0 = pickup_cell(a0);
-        wr8(a0, rd8(open_cell));
-        sub_01C9A0(a0);
-    }
-    U16{0xFF0EB8} = 1;
-    wr16(a3 + 8, d0);
-    wr16(a3 + 0xA, d1);
-    wr8(a3 + 0xC, kind);
-    wr8(a3 + 0xD, rd8(0xFF1029));
-    door_end = a3 + 0xE;
-    if (link_mode) sub_00B30C(a3);
+// and, for the boss cell, kind 2 and no old cell byte.
+// With the list full, 0xB202 writes the second half of an entry past the
+// list's end and moves the end pointer off the entry grid, so the original
+// then runs through all memory looking for the end; here it does nothing.
+void other_open_door(Cell a0, uint8_t open_class, uint16_t d0, uint16_t d1, uint8_t kind) {
+    if (st.door_count == 16) return;
+    Door& d = st.doors[st.door_count++];
+    d.cell = a0;
+    d.opening = 0x20;
+    d.restore = kind ? 0 : map_cell(a0);
+    put_cell(a0, st.class_cell[open_class]);
+    st.radar_redraw = 1;
+    d.x = d0;
+    d.y = d1;
+    d.mode = kind;
+    d.level = uint8_t(st.cur_level);
 }
 
 } // namespace
 
-void sub_00B1C4(uint32_t a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0xFF62F3, d0, d1, false, 0); }
-void sub_00B202(uint32_t a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0xFF62F4, d0, d1, true, 0); }
-void sub_00B130(uint32_t a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0xFF62F3, d0, d1, false, 2); }
-void sub_00B168(uint32_t a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0xFF62F4, d0, d1, false, 2); }
+void EnemyOpenDoorA(Cell a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0x2D, d0, d1, 0); } // 0xB1C4
+void EnemyOpenDoorB(Cell a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0x2E, d0, d1, 0); } // 0xB202
+void BossOpenDoorA(Cell a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0x2D, d0, d1, 2); } // 0xB130
+void BossOpenDoorB(Cell a0, uint16_t d0, uint16_t d1) { other_open_door(a0, 0x2E, d0, d1, 2); } // 0xB168
 
-// 0xA1D2: special cells under the player (tables 0xA20A / 0xA30A).
-void loc_00A1D2() {
-    uint32_t a0 = cur_map_ptr + uint32_t(int16_t(player_x) >> 8) + uint32_t(int16_t(player_y & 0xFF00) >> 3);
-    uint8_t m = rd8(0xA20A + cls_at(a0));
-    if (!m) return;
-    switch (rd32(0xA30A + (m - 1) * 4)) {
-    case 0xA3DE: h_00A3DE(); break;
-    case 0xA33A: pull_to_centre(0x28, 48); break;
-    case 0xA3EC: h_00A3EC(); break;
-    case 0xA38C: pull_to_centre(0x58, 96); break;
-    case 0xA456: stair_half(0xFF0DEF, true); break;
-    case 0xA472: stair_half(0xFF0DEF, false); break;
-    case 0xA48E: stair_half(0xFF0DED, true); break;
-    case 0xA4AA: stair_half(0xFF0DED, false); break;
-    case 0xA4C6: h_00A4C6(a0); break;
-    case 0xA4EC: h_00A4EC(a0); break;
-    case 0xB25E: h_00B25E(a0); break;
-    case 0xB29A: h_00B29A(a0); break;
+// 0xA1D2: special cells under the player (handlers of table 0xA30A).
+void FloorCellUnderPlayer() {
+    Cell a0 = cur_map + (int16_t(player_x) >> 8) + (int16_t(player_y & 0xFF00) >> 3);
+    switch (kFloorKind[cls_at(a0)]) {
+    case 1: StopJump(); break;
+    case 2: pull_to_centre(0x28, 48); break;
+    case 3: KeepFromCellEdges(); break;
+    case 4: pull_to_centre(0x58, 96); break;
+    case 5: stair_half(player_y, true); break;
+    case 6: stair_half(player_y, false); break;
+    case 7: stair_half(player_x, true); break;
+    case 8: stair_half(player_x, false); break;
+    case 9: StairCornerA(a0); break;
+    case 10: StairCornerB(a0); break;
+    case 11: OpenDoorA(a0); break;
+    case 12: OpenDoorB(a0); break;
     }
 }
 
-// 0xA9CE: level n's variants of the map cells (table 0xAA0C, cells FF62C6).
-void sub_00A9CE(uint16_t level) {
-    uint32_t a0 = 0xFF7CD6 + uint32_t(int16_t(uint16_t(level << 10)));
-    for (int i = 0; i < 0x400; i++, a0++) {
-        uint8_t m = rd8(0xAA0C + rd8(cell_class + rd8(a0)));
-        if (m != 0xFF) wr8(a0, rd8(0xFF62C6 + m));
+// 0xA9CE: level n's variants of the map cells.
+void ApplyLevelCellVariants(uint16_t level) {
+    for (uint8_t& c : st.maps[level]) {
+        uint8_t m = kLevelVariant[st.cell_class[c]];
+        if (m != 0xFF) c = st.class_cell[m];
     }
 }
 
 // 0xB33A: opening of the door at map cell a0, 0 when it is not open.
-uint16_t sub_00B33A(uint32_t a0) {
-    for (uint32_t a3 = 0xFF0EC6; a3 != door_end; a3 += 0xE)
-        if (rd32(a3) == a0) return rd16(a3 + 4);
+uint16_t DoorOpening(Cell a0) {
+    for (int i = 0; i < st.door_count; i++)
+        if (st.doors[i].cell == a0) return st.doors[i].opening;
     return 0;
 }
 
+namespace {
+
+// Puts door i's cell back and removes it from the list.
+void close_door(int i) {
+    put_cell(st.doors[i].cell, st.doors[i].restore);
+    std::copy(st.doors + i + 1, st.doors + st.door_count, st.doors + i);
+    st.door_count--;
+}
+
+} // namespace
+
 // 0xB35C: opens and closes the doors in the door list.
-void sub_00B35C() {
-    uint32_t a3 = 0xFF0EC6;
-    while (a3 != door_end) {
-        uint8_t mode = rd8(a3 + 0xC);
+void UpdateDoors() {
+    for (int i = 0; i < st.door_count;) {
+        Door& d = st.doors[i];
         bool remove = false;
-        if (mode == 1) {
-        } else if (mode == 2) {
-            if (rd16(a3 + 4) == 0x80) remove = true;
-            else {
-                wr16(a3 + 4, uint16_t(rd16(a3 + 4) + 0x20));
-                if (link_mode) sub_00B30C(a3);
-            }
+        if (d.mode == 1) {
+        } else if (d.mode == 2) {
+            if (d.opening == 0x80) remove = true;
+            else d.opening += 0x20;
         } else {
-            uint16_t x0 = rd16(a3 + 8), y0 = rd16(a3 + 0xA);
+            uint16_t x0 = d.x, y0 = d.y;
             uint16_t x1 = uint16_t(x0 + 0xFF), y1 = uint16_t(y0 + 0xFF);
             auto inside = [&](uint16_t x, uint16_t y) { return x0 <= x && x <= x1 && y0 <= y && y <= y1; };
             bool blocked = inside(player_x, player_y);
-            if (!blocked && U16{0xFF24E8}) {
-                uint32_t e = U32{0xFF24EA};
-                for (uint16_t n = U16{0xFF24E8}; n; n--, e = rd32(e))
-                    if ((rd16(e + 4) & 0x10) && inside(rd16(e + 0x20), rd16(e + 0x22))) {
+            if (!blocked && st.object_count) {
+                Enemy* e = first_object();
+                for (uint16_t n = st.object_count; n; n--, e = next_object(e))
+                    if ((e->flags & 0x10) && inside(e->x, e->y)) {
                         blocked = true;
                         break;
                     }
             }
             if (blocked) {
-                if (rd16(a3 + 4) != 0x80) {
-                    wr16(a3 + 4, uint16_t(rd16(a3 + 4) + 0x20));
-                    if (link_mode) sub_00B30C(a3);
-                }
+                if (d.opening != 0x80) d.opening += 0x20;
             } else {
-                wr16(a3 + 4, uint16_t(rd16(a3 + 4) - 0x20));
-                if (link_mode) sub_00B30C(a3);
-                if (!rd16(a3 + 4)) {
-                    sub_00D760(0x67);
+                d.opening -= 0x20;
+                if (!d.opening) {
+                    PlaySoundLocal(0x67);
                     remove = true;
                 }
             }
         }
         if (!remove) {
-            a3 += 0xE;
+            i++;
             continue;
         }
-        U16{0xFF0EB8} = 1;
-        uint32_t a0 = pickup_cell(rd32(a3));
-        wr8(a0, rd8(a3 + 7));
-        sub_01C9A0(a0);
-        uint32_t a2 = a3;
-        for (uint32_t a4 = a3 + 0xE; a4 != door_end; a4 += 0xE, a2 += 0xE)
-            for (int i = 0; i < 0xE; i += 2) wr16(a2 + i, rd16(a4 + i));
-        door_end = a2;
+        st.radar_redraw = 1;
+        close_door(i);
     }
 }
 
 // 0xB48A: puts every door that is not mode 1 back into the map and removes
 // it from the list.
-void loc_00B48A() {
-    uint32_t a3 = 0xFF0EC6;
-    while (a3 != door_end) {
-        if (rd8(a3 + 0xC) == 1) {
-            a3 += 0xE;
-            continue;
-        }
-        uint32_t a0 = pickup_cell(rd32(a3));
-        wr8(a0, rd8(a3 + 7));
-        sub_01C9A0(a0);
-        uint32_t a2 = a3;
-        for (uint32_t a4 = a3 + 0xE; a4 != door_end; a4 += 0xE, a2 += 0xE)
-            for (int i = 0; i < 0xE; i += 2) wr16(a2 + i, rd16(a4 + i));
-        door_end = a2;
+void ResetDoors() {
+    for (int i = 0; i < st.door_count;) {
+        if (st.doors[i].mode == 1) i++;
+        else close_door(i);
     }
 }
 
 // 0xD940: health warnings when the health (FF0DE4) drops below 0x33 or 0x10.
-void sub_00D940() {
-    if (U16{0xFF0DE6} > 0x32) {
-        if (U16{0xFF0DE4} <= 0x32) sub_01E0C2(0x1E6F8);
-    } else if (U16{0xFF0DE6} > 0xF) {
-        if (U16{0xFF0DE4} <= 0xF) sub_01E0C2(0x1E726);
+void HealthWarnings() {
+    if (st.prev_health > 0x32) {
+        if (st.health <= 0x32) QueueMessage(Msg::HealthLow);
+    } else if (st.prev_health > 0xF) {
+        if (st.health <= 0xF) QueueMessage(Msg::HealthCritical);
     }
 }
 
 // 0xD800: the player is hit from distance d0 by a shot from direction
 // (d3, d4): damage (unless the armour FF1064 is active), the camera shake
 // (FF0E20), the push (FF0DF0) and the health warnings.
-void sub_00D800(uint16_t d0, uint16_t d3, uint16_t d4) {
-    if (U16{0xFF0DE2}) return;
+void HitPlayer(uint16_t d0, uint16_t d3, uint16_t d4) {
+    if (st.dying) return;
     uint16_t d1 = d0;
-    int16_t jump_h = int16_t(U16{0xFF0E1A});
+    int16_t jump_h = int16_t(st.view_z);
     if (jump_h > 0)
         d1 = uint16_t(d1 - (int16_t(d1) >> 2));
     else if (jump_h < 0)
         d1 = uint16_t(d1 + (int16_t(d1) >> 1));
     if (d1 >= 0x400) return;
     d1 = uint16_t(int16_t(d1) >> 6);
-    bool armour = int16_t(U16{0xFF1064}) >= 0;
+    bool armour = int16_t(st.armour_slot) >= 0;
     if (!armour) {
         d1 = uint16_t(0x10 - d1);
-        if (U16{0xFF1030} == 3) d1 = uint16_t(d1 - (int16_t(d1) >> 2));
-        if (U16{0xFF1030} == 4) d1 = uint16_t(int16_t(d1) >> 1);
-        U16{0xFF0DE6} = U16{0xFF0DE4};
-        U16{0xFF0DE4} = uint16_t(U16{0xFF0DE4} - d1);
+        if (st.character == 3) d1 = uint16_t(d1 - (int16_t(d1) >> 2));
+        if (st.character == 4) d1 = uint16_t(int16_t(d1) >> 1);
+        st.prev_health = st.health;
+        st.health = uint16_t(st.health - d1);
         d1 = uint16_t(0x10 - d1);
     }
     d1 = uint16_t((d1 << 2) & 0x3C);
-    uint32_t a1 = 0xD900 + d1;
+    const uint16_t* jump = kJump[d1 >> 2];
     if (!armour) {
         d1 = uint16_t(0xF - (d1 >> 3));
-        if (d1 > U16{0xFF1072}) U16{0xFF1072} = d1;
+        if (d1 > st.hit_flash) st.hit_flash = d1;
     }
-    if (!U16{0xFF0E20} && !U16{0xFF0E1A}) U16{0xFF0E20} = rd16(a1);
-    int16_t k = int16_t(rd16(a1 + 2));
+    if (!st.jump_speed && !st.view_z) st.jump_speed = jump[0];
+    int16_t k = int16_t(jump[1]);
     uint16_t d = uint16_t(Distance(int16_t(d3), int16_t(d4)) + 1);
     d3 = uint16_t(divs(uint32_t(int32_t(int16_t(d3)) * k), d));
     d4 = uint16_t(divs(uint32_t(int32_t(int16_t(d4)) * k), d));
@@ -390,41 +350,50 @@ void sub_00D800(uint16_t d0, uint16_t d3, uint16_t d4) {
         d3 = uint16_t(int16_t(d3) >> 1);
         d4 = uint16_t(int16_t(d4) >> 1);
     }
-    U16{0xFF0DF0} = d3;
-    U16{0xFF0DF2} = d4;
-    if (rd16(a1) >= 7) {
-        U16{0xFF0E1C} = 0xFFF0;
-        U16{0xFF0E24} = 0x14;
+    st.push_x = d3;
+    st.push_y = d4;
+    if (jump[0] >= 7) {
+        st.view_z_target = 0xFFF0;
+        st.crouch_time = 0x14;
     }
-    sub_00D940();
+    HealthWarnings();
     if (!armour)
-        sub_00D98E();
+        DrawHealthBar();
     else
-        sub_010EAC();
+        ArmourCharge();
 }
 
 // 0xD7DC: a hit on the player; the shield (FF1066) only loses charge.
-void sub_00D7DC(uint16_t d0, uint16_t d3, uint16_t d4) {
-    if (int16_t(U16{0xFF1066}) >= 0) return sub_010F98();
-    uint16_t armour = U16{0xFF1064};
-    U16{0xFF1064} = 0xFFFF;
-    sub_00D800(d0, d3, d4);
-    U16{0xFF1064} = armour;
+void HitPlayerIgnoreArmour(uint16_t d0, uint16_t d3, uint16_t d4) {
+    if (int16_t(st.shield_slot) >= 0) return ShieldCharge();
+    uint16_t armour = st.armour_slot;
+    st.armour_slot = 0xFFFF;
+    HitPlayer(d0, d3, d4);
+    st.armour_slot = armour;
 }
 
 namespace {
 
-U16 dirx{0xFF0E00}, diry{0xFF0E02};
-U16 push_x{0xFF0DF0}, push_y{0xFF0DF2}; // knock-back, decays by 1/4 per frame
-U16 jump{0xFF0E1A}, jump_target{0xFF0E1C}, jump_speed{0xFF0E20}, crouch_time{0xFF0E24};
-U16 turn{0xFF0E7E}, turn_target{0xFF0E80}, speed{0xFF0E82}, speed_target{0xFF0E84};
-U16 strafe{0xFF0E86}, strafe_target{0xFF0E88};
+auto& dirx = st.dir_x;
+auto& diry = st.dir_y;
+auto& push_x = st.push_x; // knock-back, decays by 1/4 per frame
+auto& push_y = st.push_y;
+auto& jump = st.view_z;
+auto& jump_target = st.view_z_target;
+auto& jump_speed = st.jump_speed;
+auto& crouch_time = st.crouch_time;
+auto& turn = st.turn;
+auto& turn_target = st.turn_target;
+auto& speed = st.speed;
+auto& speed_target = st.speed_target;
+auto& strafe = st.strafe;
+auto& strafe_target = st.strafe_target;
 
 int16_t s16(uint16_t v) { return int16_t(v); }
 uint16_t asr(uint16_t v, int n) { return uint16_t(s16(v) >> n); }
 
 // Moves cur towards target by diff >> shift.
-void approach(const U16& cur, uint16_t target, int shift) {
+void approach(uint16_t& cur, uint16_t target, int shift) {
     uint16_t d = uint16_t(target - cur);
     if (!d) return;
     if (s16(d) < 0) cur = uint16_t(cur + asr(d, shift));
@@ -434,10 +403,10 @@ void approach(const U16& cur, uint16_t target, int shift) {
 uint16_t mul8(uint16_t a, uint16_t b) { return uint16_t((int32_t(s16(a)) * s16(b)) >> 8); }
 
 // 0xE1B2: collision shape blocking point (x, y) of map a1, 0 when free.
-uint8_t sub_00E1B2(uint32_t a1, uint16_t x, uint16_t y) {
-    uint8_t cls = rd8(cell_class + rd8(a1 + uint32_t(int16_t(uint16_t((s16(x) >> 8) + (s16(uint16_t(y & 0xFF00)) >> 3))))));
+uint8_t PointCollision(Cell a1, uint16_t x, uint16_t y) {
+    uint8_t cls = st.cell_class[map_cell(a1 + int16_t(uint16_t((s16(x) >> 8) + (s16(uint16_t(y & 0xFF00)) >> 3))))];
     if (!cls) return 0;
-    uint8_t shape = sub_00E238(cls);
+    uint8_t shape = CollisionShape(cls);
     uint8_t px = uint8_t(x), py = uint8_t(y);
     switch (shape) {
     case 1: return 1;
@@ -449,7 +418,7 @@ uint8_t sub_00E1B2(uint32_t a1, uint16_t x, uint16_t y) {
     }
 }
 
-uint8_t shape_at(uint32_t a) { return sub_00E238(rd8(cell_class + rd8(a))); }
+uint8_t shape_at(Cell a) { return CollisionShape(st.cell_class[map_cell(a)]); }
 
 bool any(uint8_t v, std::initializer_list<uint8_t> l) {
     for (uint8_t x : l)
@@ -458,9 +427,9 @@ bool any(uint8_t v, std::initializer_list<uint8_t> l) {
 }
 
 // 0xDE3E: keeps the player off the walls and diagonal walls around the cell.
-void keep_off_walls(uint32_t a1) {
+void keep_off_walls(Cell a1) {
     uint8_t x = uint8_t(player_x), y = uint8_t(player_y);
-    a1 += uint32_t(int16_t(uint16_t((s16(player_x) >> 8) + (s16(uint16_t(player_y & 0xFF00)) >> 3))));
+    a1 += int16_t(uint16_t((s16(player_x) >> 8) + (s16(uint16_t(player_y & 0xFF00)) >> 3)));
     bool right = x & 0x80, down = y & 0x80;
     uint8_t own = shape_at(a1);
     uint8_t side = shape_at(a1 + (right ? 1 : -1));
@@ -496,29 +465,29 @@ void keep_off_walls(uint32_t a1) {
         else if (own == 4) { t = uint8_t(y + 0x2D); if (x < t) x = t; }
         else if (own == 3) { t = uint8_t(0xD3 - x); if (y > t) y = t; }
     }
-    wr8(0xFF0DED, x);
-    wr8(0xFF0DEF, y);
+    set_low_byte(player_x, x);
+    set_low_byte(player_y, y);
 }
 
 // Moves the player by (dx, dy), sliding along walls. False when blocked.
-bool move(uint32_t a1, uint16_t dx, uint16_t dy) {
-    uint8_t r = sub_00E1B2(a1, uint16_t(player_x + dx), uint16_t(player_y + dy));
+bool move(Cell a1, uint16_t dx, uint16_t dy) {
+    uint8_t r = PointCollision(a1, uint16_t(player_x + dx), uint16_t(player_y + dy));
     if (r == 1) {
-        if (!sub_00E1B2(a1, uint16_t(player_x + dx), player_y)) player_x = uint16_t(player_x + dx);
-        else if (!sub_00E1B2(a1, player_x, uint16_t(player_y + dy))) player_y = uint16_t(player_y + dy);
+        if (!PointCollision(a1, uint16_t(player_x + dx), player_y)) player_x = uint16_t(player_x + dx);
+        else if (!PointCollision(a1, player_x, uint16_t(player_y + dy))) player_y = uint16_t(player_y + dy);
         else return false;
         return true;
     }
     if (r) {
         // Diagonal wall: first along the wall, then the rest.
         uint16_t d6 = asr(uint16_t(dy - dx), 1), d5 = uint16_t(-d6);
-        if (!sub_00E1B2(a1, uint16_t(player_x + d5), uint16_t(player_y + d6))) {
+        if (!PointCollision(a1, uint16_t(player_x + d5), uint16_t(player_y + d6))) {
             dx = d5;
             dy = d6;
         } else {
             dx = uint16_t(dx - d5);
             dy = uint16_t(dy - d6);
-            if (sub_00E1B2(a1, uint16_t(player_x + dx), uint16_t(player_y + dy))) return false;
+            if (PointCollision(a1, uint16_t(player_x + dx), uint16_t(player_y + dy))) return false;
         }
     }
     player_x = uint16_t(player_x + dx);
@@ -529,16 +498,18 @@ bool move(uint32_t a1, uint16_t dx, uint16_t dy) {
 } // namespace
 
 // 0xDAB8: player controls, turning, jumping, movement and collision.
-void sub_00DAB8() {
-    uint8_t pad = pad_buttons, prev = rd8(0xFF0032);
-    if (U16{0xFF0DE2}) {
+void PlayerControls() {
+    // PC controls: the strafe keys strafe instead of turning, the mouse turns.
+    uint8_t strafe_keys = host::strafe_keys();
+    uint8_t pad = uint8_t(pad_buttons & ~strafe_keys), prev = st.pad_prev;
+    if (st.dying) {
         speed_target = 0;
         turn_target = 0;
         strafe_target = 0;
         jump_target = 0xFFE4;
         crouch_time = 0x63;
     } else {
-        if ((pad & 0x20) && !(prev & 0x20)) sub_01125E();
+        if ((pad & 0x20) && !(prev & 0x20)) NextWeapon();
         turn_target = 0;
         speed_target = 0;
         strafe_target = 0;
@@ -561,8 +532,12 @@ void sub_00DAB8() {
         } else {
             if (pad & 4) turn_target = 0xFFF0;
             if (pad & 8) turn_target = 0x10;
-            if (pad & 1) speed_target = U16{0xFF1030} == 3 ? 0x2D : 0x28;
-            if (pad & 2) speed_target = U16{0xFF1030} == 3 ? 0xFFDD : 0xFFEC;
+            if (pad & 1) speed_target = st.character == 3 ? 0x2D : 0x28;
+            if (pad & 2) speed_target = st.character == 3 ? 0xFFDD : 0xFFEC;
+        }
+        if (s16(jump) <= 0) {
+            if (strafe_keys & 4) strafe_target = 0xFFD8;
+            if (strafe_keys & 8) strafe_target = 0x28;
         }
     }
     if (jump_target == 0xFFF0 && !(crouch_time = uint16_t(crouch_time - 1))) jump_target = 0;
@@ -584,21 +559,23 @@ void sub_00DAB8() {
         else if (d0 != jump_target) jump = uint16_t(jump - 4);
     }
     if (s16(jump) <= 0) approach(turn, turn_target, turn_target ? 3 : 1);
-    if (turn) {
-        player_angle = uint16_t((player_angle + turn) & 0x1FF);
-        dirx = rd16(0x8124 + player_angle * 4);
-        diry = rd16(0x8124 + player_angle * 4 + 2);
+    int mouse = host::mouse_turn();
+    if (st.dying) mouse = 0;
+    if (turn || mouse) {
+        player_angle = uint16_t((player_angle + turn + mouse) & 0x1FF);
+        dirx = kDirVectors[player_angle][0];
+        diry = kDirVectors[player_angle][1];
     }
     if (s16(jump) <= 0) {
         approach(speed, speed_target, speed_target ? 4 : 1);
         approach(strafe, strafe_target, strafe_target ? 4 : 1);
     }
-    uint32_t a1 = cur_map_ptr;
+    Cell a1 = cur_map;
     uint16_t dx, dy;
     d0 = speed;
     if (!d0) d0 = push_x | push_y;
     if (!d0) {
-        if (!strafe) return loc_00A1D2();
+        if (!strafe) return FloorCellUnderPlayer();
         dx = mul8(uint16_t(-diry), strafe);
         dy = mul8(dirx, strafe);
     } else {
@@ -614,43 +591,43 @@ void sub_00DAB8() {
     dx = uint16_t(dx + push_x);
     dy = uint16_t(dy + push_y);
     if (move(a1, dx, dy)) keep_off_walls(a1);
-    loc_00A1D2();
+    FloorCellUnderPlayer();
 }
 
 // 0xEC1C: head bob and footstep sounds while walking.
-void sub_00EC1C() {
+void HeadBob() {
     uint16_t v = uint16_t((s16(speed) < 0 ? -speed : speed) + (s16(strafe) < 0 ? -strafe : strafe));
-    U16 bob{0xFF0E26};
+    auto& bob = st.bob;
     bob = uint16_t(bob + v);
     // 0xEBE0
-    uint8_t step = rd8(0xEC0C + ((s16(bob) >> 5) & 0xF));
-    if (step != rd8(0xFF2726)) {
-        wr8(0xFF2726, step);
-        sub_00D760(step);
+    uint8_t step = kFootstep[(s16(bob) >> 5) & 0xF];
+    if (step != st.footstep) {
+        st.footstep = step;
+        PlaySoundLocal(step);
     }
     if (v >= 0x28) {
-        uint16_t i = uint16_t((s16(bob) >> 4) & 0x1C);
-        uint16_t dh = rd16(0xECA0 + i), da = rd16(0xECA2 + i);
+        uint16_t i = uint16_t((s16(bob) >> 6) & 7);
+        uint16_t dh = kBob[i][0], da = kBob[i][1];
         if (da || dh) {
-            U16{0xFF0E2A} = dh;
-            U16{0xFF0E28} = da;
-            U16{0xFF0E2C} = player_angle;
-            U16{0xFF0E2E} = dirx;
-            U16{0xFF0E30} = diry;
-            U16{0xFF0E32} = jump;
+            st.bob_lift = dh;
+            st.bob_turn = da;
+            st.bob_angle = player_angle;
+            st.bob_dir_x = dirx;
+            st.bob_dir_y = diry;
+            st.bob_z = jump;
             jump = uint16_t(jump + dh);
             player_angle = uint16_t((player_angle + da) & 0x1FF);
-            dirx = rd16(0x8124 + player_angle * 4);
-            diry = rd16(0x8124 + player_angle * 4 + 2);
+            dirx = kDirVectors[player_angle][0];
+            diry = kDirVectors[player_angle][1];
             return;
         }
     }
-    U32{0xFF0E28} = 0;
+    st.bob_turn = st.bob_lift = 0;
 }
 
 // 0x11AB4: pickup cells.
-void PickupItem(uint32_t a0, uint8_t d3) {
-    if (U16{0xFF0DE2}) return;
+void PickupItem(Cell a0, uint8_t d3) {
+    if (st.dying) return;
     if (d3 == 0x82) return take_item(0xD, a0);
     if (d3 == 0x36) return take_item(0xE, a0);
     uint16_t d0 = uint16_t(d3 - 0x18);
@@ -661,28 +638,26 @@ void PickupItem(uint32_t a0, uint8_t d3) {
 
 // 0xE238: cell class -> collision shape (table 0xE23E). The 68000 code only
 // replaces the low byte of d3.
-uint8_t sub_00E238(uint16_t d3) { return rd8(0xE23E + int16_t(d3)); }
+uint8_t CollisionShape(uint16_t d3) { return kCollisionShape[uint8_t(d3)]; }
 
-// Targets of the cell-use table 0xE420 (called by 0xE3C4 / 0xE3F8 with
-// a0 = map cell, d3 = cell class).
-void CellUseHandler(uint32_t addr, uint32_t a0, uint16_t d3) {
-    switch (addr) {
-    case 0xB25E: h_00B25E(a0); break;
-    case 0xB29A: h_00B29A(a0); break;
-    case 0xE63C: sub_001D46(0); break;
-    case 0xE644: sub_001D46(1); break;
-    case 0xE64E: sub_001D46(2); break;
-    case 0xE658: sub_001D46(3); break;
-    case 0xE662: h_00E662(); break;
-    case 0x11AB4: PickupItem(a0, uint8_t(d3)); break;
-    case 0x2682: h_002682(); break;
-    case 0xE7D6: h_00E7D6(); break;
-    case 0xE69E: h_00E69E(); break;
-    case 0xE6FE: h_00E6FE(); break;
-    case 0xE75E: h_00E75E(); break;
-    case 0xE634: h_00E634(); break;
-    case 0xE69C: case 0x13298: break;
-    default: untranslated(addr);
+// What using the cell a0 of class d3 does (called by 0xE3C4 / 0xE3F8).
+void CellUseHandler(CellUse use, Cell a0, uint16_t d3) {
+    switch (use) {
+    case CellUse::DoorA: OpenDoorA(a0); break;
+    case CellUse::DoorB: OpenDoorB(a0); break;
+    case CellUse::Light0: SetLighting(0); break;
+    case CellUse::Light1: SetLighting(1); break;
+    case CellUse::Light2: SetLighting(2); break;
+    case CellUse::Light3: SetLighting(3); break;
+    case CellUse::Hazard: HazardCell(); break;
+    case CellUse::Pickup: PickupItem(a0, uint8_t(d3)); break;
+    case CellUse::Flash: StartFlash(); break;
+    case CellUse::LiftStop: LiftStop(); break;
+    case CellUse::LiftDown: LiftDown(); break;
+    case CellUse::LiftUp: LiftUp(); break;
+    case CellUse::LiftContinue: LiftContinue(); break;
+    case CellUse::Exit: ExitCell(); break;
+    case CellUse::None: break;
     }
 }
 

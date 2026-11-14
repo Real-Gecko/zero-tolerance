@@ -1,0 +1,61 @@
+# HUD messages, one per line in the order of enum Msg (src/game/game.hpp):
+# four lines of 9 characters between |, then the speech samples as
+# (frames sound id) hex pairs. The last 32 are the level messages
+# (area 0-1, level 0-15).
+MINE     |COLLECTED|         |         | 14 40  1E 34
+BULLET   |PROOF    |VEST     |COLLECTED| 3C 33  1E 34
+FIRE     |EXTIN-   |GUISHER  |COLLECTED| 37 38  1E 34
+FIRE     |PROOF    |SUIT     |COLLECTED| 46 3A  1E 34
+FLASH    |LIGHT    |COLLECTED|         | 1E 39  1E 34
+HAND     |GRENADE  |COLLECTED|         | 0F 5A  1E 57  1E 34
+HANDGUN  |COLLECTED|         |         | 0F 5A  11 59  1E 34
+NIGHT    |VISION   |COLLECTED|         | 28 41  1E 34
+LASER    |AIMED GUN|COLLECTED|         | 23 5D  11 59  1E 34
+ROCKET   |LAUNCHER |COLLECTED|         | 14 63  1E 5E  1E 34
+SHOTGUN  |COLLECTED|         |         | 28 64  1E 34
+FLAME    |THROWER  |COLLECTED|         | 2D 55  1E 34
+PULSE    |LASER    |COLLECTED|         | 0F 61  19 5C  1E 34
+BIO      |SCANNER  |COLLECTED|         | 14 32  1E 42  1E 34
+MEDIPACK |COLLECTED|         |         | 28 3F  1E 34
+STEPPING |ONE FLOOR|UP       |         | 3C 43  1E 44
+STEPPING |ONE FLOOR|DOWN     |         | 3C 43  1E 37
+FLOOR    |SECURED  |         |         | 11 56  1E A0
+FLOOR NOT|SECURED  |         |         | 11 56  14 9D  1E A0
+         |         |         |         | 
+HEALTH   |CONDITION|LOW      |         | 2D 3C  1E 3E
+HEALTH   |CONDITION|CRITICAL |         | 2D 3C  1E 35
+AMMU-    |NITION IS|LOW      |         | 2D 60  37 45  1E 3E
+ZERO     |ENEMIES  |REMAINING|         | 19 A1  19 9C  1E 9F
+PROCEED  |TO NEXT  |LEVEL    |         | 41 9E  1E 3D
+ENTERING |DOCKING  |BAY LEVEL|1        | 1E 53  23 51  14 3D  1E 47
+ENTERING |DOCKING  |BAY LEVEL|2        | 1E 53  23 51  14 3D  1E 48
+ENTERING |BRIDGE   |LEVEL 1  |         | 1E 53  28 50  1E 47
+ENTERING |ENGINE   |LEVEL 1  |         | 1E 53  28 52  19 3D  1E 47
+ENTERING |ENGINE   |LEVEL 2  |         | 1E 53  28 52  19 3D  1E 48
+ENTERING |ENGINE   |LEVEL 3  |         | 1E 53  28 52  19 3D  1E 49
+ENTERING |ENGINE   |LEVEL 4  |         | 1E 53  28 52  19 3D  1E 4A
+ENTERING |GREEN    |HOUSE    |LEVEL 1  | 1E 53  23 58  19 3D  1E 47
+ENTERING |GREEN    |HOUSE    |LEVEL 2  | 1E 53  23 58  19 3D  1E 48
+ENTERING |GREEN    |HOUSE    |LEVEL 3  | 1E 53  23 58  19 3D  1E 49
+ENTERING |BRIDGE   |LEVEL 2  |         | 1E 53  28 50  1E 48
+ENTERING |REACTOR  |LEVEL 1  |         | 3F 54  19 3D  1E 47
+ENTERING |REACTOR  |LEVEL 2  |         | 3F 54  19 3D  1E 48
+ENTERING |REACTOR  |LEVEL 2  |         | 3F 54  19 3D  1E 48
+ENTERING |REACTOR  |LEVEL 2  |         | 3F 54  19 3D  1E 48
+ENTERING |REACTOR  |LEVEL 2  |         | 3F 54  19 3D  1E 48
+ENTERING |FLOOR 165|         |         | 1E 53  14 56  28 92  14 91  1E 4B
+ENTERING |FLOOR 164|         |         | 1E 53  14 56  28 92  19 91  1E 4A
+ENTERING |FLOOR 163|         |         | 1E 53  14 56  28 92  19 91  1E 49
+ENTERING |FLOOR 162|         |         | 1E 53  14 56  28 92  19 91  1E 48
+ENTERING |FLOOR 161|         |         | 1E 53  14 56  28 92  14 91  1E 47
+ENTERING |FLOOR 160|         |         | 1E 53  14 56  28 92  14 91
+ENTERING |FLOOR 159|         |         | 1E 53  14 56  28 92  1E 4C  1E 5F
+ENTERING |FLOOR 158|         |         | 1E 53  14 56  28 92  1E 4C  1E 5B
+ENTERING |FLOOR 157|         |         | 1E 53  14 56  28 92  1E 4C  1E 4F
+ENTERING |FLOOR 156|         |         | 1E 53  14 56  28 92  1E 4C  1E 4E
+ENTERING |FLOOR 155|         |         | 1E 53  14 56  28 92  1E 4C  1E 4B
+ENTERING |FLOOR 154|         |         | 1E 53  14 56  28 92  1E 4C  1E 4A
+ENTERING |FLOOR 153|         |         | 1E 53  14 56  28 92  1E 4C  1E 49
+ENTERING |FLOOR 152|         |         | 1E 53  14 56  28 92  1E 4C  1E 48
+ENTERING |FLOOR 151|         |         | 1E 53  14 56  28 92  1B 4C  1E 47
+ENTERING |FLOOR 151|         |         | 1E 53  14 56  28 92  1B 4C  1E 47

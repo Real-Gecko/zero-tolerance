@@ -1,0 +1,68 @@
+# Sprite set (src/game/sprites.cpp), blocks in set_19D50C.png.
+# "anim" starts an animation, "view" one of its views (1, 2, 4, 6 or 8, by
+# the angle it is seen from), each "part" one frame of the view: anchor x and
+# y (0 left/top, 1 centre, 2 right/bottom), block width and height (1/32 and
+# 1/16 of the scale), then rows of block numbers separated by "/", "m" = mirrored.
+anim
+view
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 16 17 / 24 9
+part 1 2 8 8: 18 19 / 25 26
+part 1 2 8 8: 0 1 / 8 9
+part 1 2 8 8: 20 21 / 27 24m
+part 1 2 8 8: 22 23 / 28 29
+view
+part 1 2 8 8: 2 3 / 10 11
+part 1 2 8 8: 2 3 / 10 11
+part 1 2 8 8: 30 31 / 34 35
+part 1 2 8 8: 32 33 / 36 37
+part 1 2 8 8: 2 3 / 10 11
+part 1 2 8 8: 30 31 / 39 34m
+part 1 2 8 8: 32 33 / 38 36m
+view
+part 1 2 8 8: 64 65 / 47m 46m
+part 1 2 8 8: 64 65 / 47m 46m
+part 1 2 8 8: 66 67 / 49m 48m
+part 1 2 8 8: 68 69 / 59m 58m
+part 1 2 8 8: 64 65 / 47m 46m
+part 1 2 8 8: 66 67 / 57m 56m
+part 1 2 8 8: 68 69 / 51m 50m
+view
+part 1 2 8 8: 42 43 / 46 47
+part 1 2 8 8: 42 43 / 46 47
+part 1 2 8 8: 40 41 / 48 49
+part 1 2 8 8: 44 45 / 58 59
+part 1 2 8 8: 42 43 / 46 47
+part 1 2 8 8: 40 41 / 56 57
+part 1 2 8 8: 44 45 / 50 51
+anim
+view
+part 1 2 8 8: 52 53 / 60 61
+anim
+view
+part 1 2 8 8: 54 55 / 62 63
+anim
+view
+part 1 1 10 9: 4 5
+anim
+view
+part 1 1 10 9: 6 7
+anim
+view
+part 1 2 8 8: 12 13 / 8 9
+part 1 2 8 8: 12 13 / 8 9
+part 1 2 8 8: 16 70 / 24 9
+part 1 2 8 8: 18 71 / 25 26
+part 1 2 8 8: 12 13 / 8 9
+part 1 2 8 8: 20 72 / 27 24m
+part 1 2 8 8: 22 73 / 28 29
+anim
+view
+part 1 2 8 8: 14 15 / 8 9
+part 1 2 8 8: 14 15 / 8 9
+part 1 2 8 8: 16 74 / 24 9
+part 1 2 8 8: 18 75 / 25 26
+part 1 2 8 8: 14 15 / 8 9
+part 1 2 8 8: 20 76 / 27 24m
+part 1 2 8 8: 22 77 / 28 29

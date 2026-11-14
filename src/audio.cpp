@@ -5,7 +5,6 @@
 
 #include <fstream>
 #include <map>
-#include <sstream>
 #include <vector>
 
 namespace {
@@ -77,7 +76,6 @@ struct Audio::Impl {
         size_t pos = 0;
         int channel = -1;
     };
-    bool music_paused = false;
     std::vector<Voice> voices;
     std::map<std::string, std::shared_ptr<std::vector<float>>> cache;
     int loop_start = -1, loop_end = -1;
@@ -99,7 +97,7 @@ struct Audio::Impl {
         self->buf.assign(size_t(frames) * 2, 0.0f);
         self->mbuf.assign(size_t(frames) * 2, 0.0f);
         SDL_LockMutex(self->mutex);
-        if (self->player && !self->music_paused && fluid_player_get_status(self->player) == FLUID_PLAYER_PLAYING)
+        if (self->player && fluid_player_get_status(self->player) == FLUID_PLAYER_PLAYING)
             fluid_synth_write_float(self->synth, frames, self->mbuf.data(), 0, 2, self->mbuf.data(), 1, 2);
         for (size_t i = 0; i < self->buf.size(); i++)
             self->buf[i] = self->mbuf[i] * self->music_vol;
@@ -140,6 +138,9 @@ bool Audio::init(const std::string& soundfont) {
     m.settings = new_fluid_settings();
     fluid_settings_setnum(m.settings, "synth.sample-rate", kRate);
     fluid_settings_setstr(m.settings, "player.timing-source", "sample");
+    // The MIDI files leave headroom for the per-patch levels (extract_sound.py
+    // GM_GAIN); this is the default 0.2 raised to make up for it.
+    fluid_settings_setnum(m.settings, "synth.gain", 0.38);
     m.synth = new_fluid_synth(m.settings);
     if (fluid_synth_sfload(m.synth, soundfont.c_str(), 1) == FLUID_FAILED)
         SDL_Log("cannot load soundfont %s; music disabled", soundfont.c_str());
@@ -227,60 +228,4 @@ void Audio::stop_sfx(int channel) {
     SDL_LockMutex(m.mutex);
     std::erase_if(m.voices, [&](const Impl::Voice& v) { return v.channel == channel; });
     SDL_UnlockMutex(m.mutex);
-}
-
-void Audio::pause_music(bool paused) {
-    SDL_LockMutex(impl_->mutex);
-    impl_->music_paused = paused;
-    SDL_UnlockMutex(impl_->mutex);
-}
-
-void Audio::set_volumes(float music, float sfx) {
-    SDL_LockMutex(impl_->mutex);
-    impl_->music_vol = music;
-    impl_->sfx_vol = sfx;
-    SDL_UnlockMutex(impl_->mutex);
-}
-
-bool Sounds::load(Audio* audio, const std::string& data_dir) {
-    audio_ = audio;
-    dir_ = data_dir + "/";
-    std::ifstream f(data_dir + "/sound/sounds.txt");
-    std::string line;
-    while (std::getline(f, line)) {
-        std::istringstream ss(line);
-        std::string id, type, file;
-        if (!(ss >> id >> type >> file) || id[0] == '#')
-            continue;
-        int n = std::stoi(id, nullptr, 16) & 255;
-        file_[n] = file;
-        music_[n] = type == "music";
-    }
-    return bool(f.eof());
-}
-
-void Sounds::play(int id) {
-    id &= 255;
-    if (!audio_ || file_[id].empty())
-        return;
-    if (music_[id]) {
-        last_music_ = id;
-        if (music_on_)
-            audio_->play_music(dir_ + file_[id]);
-    } else if (sfx_on_) {
-        audio_->play_sfx(dir_ + file_[id]);
-    }
-}
-
-void Sounds::set_enabled(bool music, bool sfx) {
-    sfx_on_ = sfx;
-    if (music == music_on_)
-        return;
-    music_on_ = music;
-    if (!audio_)
-        return;
-    if (!music)
-        audio_->stop_music();
-    else if (last_music_ >= 0)
-        audio_->play_music(dir_ + file_[last_music_]);
 }

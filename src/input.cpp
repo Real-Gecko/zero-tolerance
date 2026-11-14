@@ -10,7 +10,8 @@ uint16_t key_button(SDL_Scancode k) {
     case SDL_SCANCODE_Z: return PAD_A;
     case SDL_SCANCODE_X: return PAD_B;
     case SDL_SCANCODE_C: return PAD_C;
-    case SDL_SCANCODE_RETURN: return PAD_START;
+    case SDL_SCANCODE_RETURN: return SDL_GetModState() & SDL_KMOD_ALT ? 0 : PAD_START; // Alt+Enter: fullscreen
+    case SDL_SCANCODE_TAB: return PAD_START;
     default: return 0;
     }
 }
@@ -19,6 +20,17 @@ uint16_t key_button(SDL_Scancode k) {
 void Input::handle_event(const SDL_Event& e) {
     if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat)
         taps_ |= key_button(e.key.scancode);
+    if (e.type == SDL_EVENT_MOUSE_MOTION)
+        mouse_x_ += e.motion.xrel;
+    // Left click fires (B), right click switches items (C).
+    uint16_t mb = 0;
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP)
+        mb = e.button.button == SDL_BUTTON_LEFT ? PAD_B : e.button.button == SDL_BUTTON_RIGHT ? PAD_C : 0;
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        taps_ |= mb;
+        mouse_held_ |= mb;
+    }
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) mouse_held_ &= uint16_t(~mb);
     if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad_)
         pad_ = SDL_OpenGamepad(e.gdevice.which);
     if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad_ && SDL_GetGamepadID(pad_) == e.gdevice.which) {
@@ -30,24 +42,37 @@ void Input::handle_event(const SDL_Event& e) {
 void Input::update() {
     // A tap counts as released last update, so it shows up as a press.
     prev_ = held_ & ~taps_;
-    held_ = taps_;
+    held_ = taps_ | mouse_held_;
+    strafe_ = 0;
     taps_ = 0;
     int n;
     const bool* k = SDL_GetKeyboardState(&n);
-    for (int i = 0; i < n; i++)
-        if (k[i])
-            held_ |= key_button(SDL_Scancode(i));
+    uint16_t other = 0; // left/right from keys other than A/D
+    for (int i = 0; i < n; i++) {
+        if (!k[i]) continue;
+        uint16_t b = key_button(SDL_Scancode(i));
+        held_ |= b;
+        if (i == SDL_SCANCODE_A || i == SDL_SCANCODE_D) strafe_ |= b;
+        else other |= b;
+    }
     if (pad_) {
         auto b = [&](SDL_GamepadButton btn) { return SDL_GetGamepadButton(pad_, btn); };
         Sint16 lx = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFTX);
         Sint16 ly = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFTY);
         if (b(SDL_GAMEPAD_BUTTON_DPAD_UP) || ly < -16000) held_ |= PAD_UP;
         if (b(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || ly > 16000) held_ |= PAD_DOWN;
-        if (b(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -16000) held_ |= PAD_LEFT;
-        if (b(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > 16000) held_ |= PAD_RIGHT;
+        if (b(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -16000) held_ |= PAD_LEFT, other |= PAD_LEFT;
+        if (b(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > 16000) held_ |= PAD_RIGHT, other |= PAD_RIGHT;
         if (b(SDL_GAMEPAD_BUTTON_WEST)) held_ |= PAD_A;
         if (b(SDL_GAMEPAD_BUTTON_SOUTH)) held_ |= PAD_B;
         if (b(SDL_GAMEPAD_BUTTON_EAST)) held_ |= PAD_C;
         if (b(SDL_GAMEPAD_BUTTON_START)) held_ |= PAD_START;
     }
+    strafe_ &= uint16_t(~other);
+}
+
+float Input::take_mouse_x() {
+    float x = mouse_x_;
+    mouse_x_ = 0;
+    return x;
 }

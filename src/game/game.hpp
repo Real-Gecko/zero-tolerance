@@ -1,219 +1,295 @@
-// Zero Tolerance game code translated from the 68000 ROM. Function names are
-// the disassembly labels (sub_XXXXXX = ROM address) or names from
-// disasm/labels*.txt. Register arguments become parameters.
+// Zero Tolerance game code translated from the 68000 ROM. Functions are named
+// by what they do; the ROM address is in a comment at each definition.
+// Register arguments become parameters.
 #pragma once
 
-#include "../md/mem.hpp"
+#include "../assets.hpp"
+#include "../host.hpp"
+#include "state.hpp"
+#include "tables.hpp"
+
+#include <map>
+#include <vector>
 
 namespace game {
 
-using namespace md;
+using assets::be16;
+using assets::be32;
+using host::int_mask;
 
-inline constexpr uint32_t VDP_DATA = 0xC00000, VDP_CTRL = 0xC00004;
-inline void vdp_ctrl(uint16_t v) { wr16(VDP_CTRL, v); }
-inline void vdp_ctrl32(uint32_t v) { wr32(VDP_CTRL, v); }
-inline void vdp_data(uint16_t v) { wr16(VDP_DATA, v); }
-inline void vdp_data32(uint32_t v) { wr32(VDP_DATA, v); }
-inline bool vdp_dma_busy() { return rd16(VDP_CTRL) & 2; }
+// Short names for the most used state variables.
+inline auto& vblank_count = st.vblank_count;
+inline auto& fb_dma_pending = st.fb_dma_pending;
+inline auto& random_seed = st.random_seed;
+inline auto& sound_options = st.sound_options;
+inline auto& pad_buttons = st.pad_buttons;
+inline auto& demo_mode = st.demo_mode;
+inline auto& player_x = st.player_x;
+inline auto& player_y = st.player_y;
+inline auto& player_angle = st.player_angle;
+inline auto& cur_map = st.cur_map;
+inline auto& cur_level = st.cur_level;
+inline auto& last_sound = st.last_sound;
+inline auto& cur_area = st.cur_area;
+inline auto& level_id = st.level_id;
+// The low byte of a word (move.b to the odd address).
+inline void set_low_byte(uint16_t& w, uint8_t b) { w = uint16_t((w & 0xFF00) | b); }
+inline uint8_t& low_byte(uint16_t& w) { return reinterpret_cast<uint8_t*>(&w)[0]; }
 
-// RAM variables (docs/RE_NOTES.md).
-inline constexpr U16 vblank_count{0xFF0000};
-inline constexpr U16 fb_dma_pending{0xFF0002}; // 2 = DMA the 3D view in the next two VBlanks
-inline constexpr U16 warm_boot{0xFF0004};
-inline constexpr U32 random_seed{0xFF0006};
-inline constexpr uint32_t password = 0xFF000A; // 9 characters
-inline constexpr U16 sound_options{0xFF0014};  // bit 0 music, bit 2 FM effects, bit 3 samples
-inline constexpr U8 pad_present{0xFF0018};
-inline constexpr U8 pad_buttons{0xFF002E};     // active high: bit 7 Start, 6 A, 5 C, 4 B, 3 R, 2 L, 1 D, 0 U
-inline constexpr U8 pad_extra{0xFF002F};
-inline constexpr U16 pad_prev{0xFF0032};
-inline constexpr U32 vdp_queue_ptr{0xFF0036};
-inline constexpr uint32_t vdp_queue = 0xFF0544;
-inline constexpr U16 demo_mode{0xFF06DC};
-inline constexpr U16 player_x{0xFF0DEC};
-inline constexpr U16 player_y{0xFF0DEE};
-inline constexpr U16 player_angle{0xFF0E04};
-inline constexpr U32 cur_map_ptr{0xFF1024};
-inline constexpr U16 cur_level{0xFF1028};
-inline constexpr U16 last_sound{0xFF2708};
-inline constexpr U16 cur_area{0xFF271C};
-inline constexpr U16 link_mode{0xFF2912}; // two-console link cable game
-inline constexpr U16 link_sr{0xFF291C};
-inline constexpr U8 level_id{0xFF28FC};   // bits 4-5 area, bits 0-3 level
-inline constexpr uint32_t framebuffer = 0xFF3926;
-inline constexpr uint32_t cell_class = 0xFF7BC6;
+// 64 black colours.
+inline constexpr uint16_t kBlack[64] = {};
+// The gameplay palette for night vision (goggles) on or off.
+inline const uint16_t* game_palette(bool goggles, bool indoors) {
+    return assets::palette(goggles ? (indoors ? "palettes/game_indoor_goggles.png" : "palettes/game_goggles.png")
+                                   : (indoors ? "palettes/game_indoor.png" : "palettes/game.png"));
+}
+// Map cells. Like the original's pointers, cells past level 15 read on into
+// face_scripts (the area-0 level-15 lift up leads there), and writes outside
+// the 16 maps go to off_map_cell.
+constexpr Cell kOffMap = 0x5000; // off_map_cell
+constexpr Cell kNoCell = INT32_MIN;
+inline Cell level_map(uint16_t level) { return int16_t(uint16_t(level << 10)); }
+inline Cell on_map(Cell c) { return c >= 0 && c < 0x4000 ? c : kOffMap; }
+inline uint8_t map_cell(Cell c) {
+    if (c >= 0 && c < 0x4000) return st.maps[c >> 10][c & 0x3FF];
+    if (c >= 0x4000 && c < kOffMap) return st.face_scripts[c - 0x4000];
+    if (c == kOffMap) return st.off_map_cell;
+    // Before the maps lie level_light and cell_class; the RAM after them is
+    // never written, and nothing reachable reads further.
+    if (c >= -0x10 && c < 0) return st.level_light[c + 0x10];
+    if (c >= -0x110 && c < -0x10) return st.cell_class[c + 0x110];
+    return 0;
+}
+inline void put_cell(Cell c, uint8_t v) {
+    c = on_map(c);
+    (c == kOffMap ? st.off_map_cell : st.maps[c >> 10][c & 0x3FF]) = v;
+}
 
+// The object list (st.object_list, linked by next; links are slot + 1).
+inline Enemy* object_at(uint8_t link) { return link ? &st.objects[link - 1] : nullptr; }
+inline uint8_t link_of(const Enemy* e) { return e ? uint8_t(e - st.objects + 1) : 0; }
+inline uint8_t slot_of(const Enemy* e) { return uint8_t(e - st.objects); }
+inline Enemy* first_object() { return object_at(st.object_list); }
+inline Enemy* next_object(const Enemy* e) { return object_at(e->next); }
+// Target address 0 read as an object: the ROM vectors (x 0, y 0xA88, level 0x10).
+inline Enemy rom_object = [] {
+    Enemy e{};
+    e.y = 0xA88;
+    e.level = 0x10;
+    return e;
+}();
+// The target (+6) as an object; nullptr for kNoTarget.
+inline Enemy* target_of(const Enemy* e) {
+    if (e->target < 64) return &st.objects[e->target];
+    return e->target == kPlayerTarget ? &st.player_obj : e->target == kPlayerPos ? &rom_object : nullptr;
+}
+inline void set_target(Enemy* e, const Enemy* t) {
+    e->target = !t ? kPlayerPos : t == &st.player_obj ? kPlayerTarget : uint8_t(slot_of(t));
+}
+inline Enemy* const player_struct = &st.player_obj; // FF119C
 [[noreturn]] void untranslated(uint32_t addr);
-struct Untranslated {
-    uint32_t addr;
-};
-extern bool untranslated_throws; // tests: throw Untranslated instead of exiting
+extern bool sound_muted; // PC: the in-between views (level.cpp) play no sounds
 
 // boot.cpp
 [[noreturn]] void Reset();
 void VBlank();
 uint32_t Random();
-void sub_000744(uint32_t src, uint16_t dest, uint16_t len);
-void sub_00079A();
+uint16_t ReadHvCounter();
+// 0x744: queues an upload for the next VBlank: in-hand weapon tiles
+// (kHandTiles index) or the title's line scroll.
+void QueueVramDma(uint8_t src);
+inline constexpr uint8_t kTitleHscroll = 0xFF;
+// The in-hand weapon tiles (screens/tiles) and their sprite sizes, uploaded
+// to tile 0x500.
+struct HandTiles {
+    const char* file;
+    std::vector<assets::Cell> cells;
+};
+extern const HandTiles kHandTiles[10];
+// The tiles of the 8x16 font (kFont16), top and bottom per character.
+inline const std::vector<uint8_t>& Font16Tiles() { return assets::tiles("screens/tiles/font8x16.png", {{1, 2}}); }
+void RunDmaQueue();
 void ReadPad();
-void sub_000BAE(uint32_t src, int count);
-void sub_000BD2(uint32_t stack_top);
-void sub_000BF2();
-void sub_000C5A();
-void sub_000CAA();
-void sub_000D36();
-void sub_000FC0();
-void sub_001D18();
-void sub_00D760(uint16_t id);
-void sub_058054();
-void sub_05755E(uint16_t level);
+void WriteCram(const uint16_t* src, int count);
+void ClearRam();
+void SetGameVdpRegs();
+void ClearPlaneB();
+void ClearPlaneA();
+void ReadInput();
+void NewGame();
+void QueueSpriteListDma();
+void PlaySoundLocal(uint16_t id);
+void DrawMapLevelLines(uint16_t level);
 uint16_t GameLevelLoop(); // d7: 1 = restart from the boot screens
 
-// technopop.cpp, wall.cpp
+// sega_logo_spin.cpp, wall.cpp
 void WaitVBlank();
-void DrawWallSpan(uint32_t left, uint32_t right);
+void DrawWallSpan();
 
 // intro.cpp
-void vdp_write_addr(uint16_t a);
-uint16_t LoadImageRes(uint16_t vram, uint16_t nt, uint16_t attr, uint32_t res);
-uint16_t LoadTiles(uint16_t vram, uint32_t& res);
-void sub_002022(uint16_t vram, uint16_t nt, uint16_t attr, uint32_t res);
-void sub_01CC04(int count);
-void sub_01CDEE();
-void sub_01EF50();
-void sub_01F578();
+// Image resources (assets::tilemap).
+inline constexpr const char* kBootLogo = "image/boot_logo.png";
+inline constexpr const char* kTitleStrip = "image/title.png";
+inline constexpr const char* kTitleFloor = "image/title_floor.png";
+inline constexpr const char* kHudFrame = "image/hud_frame.png";
+inline constexpr const char* kMapScreen = "hud/mapscreen.png";
+inline constexpr const char* kPortraits[5] = {
+    "portraits/face0.png", "portraits/face1.png", "portraits/face2.png", "portraits/face3.png", "portraits/face4.png",
+};
+uint16_t LoadImageRes(uint16_t vram, uint16_t nt, uint16_t attr, const char* image);
+uint16_t LoadTiles(uint16_t vram, const char* image);
+void LoadImageMap(uint16_t vram, uint16_t nt, uint16_t attr, const char* image);
+void StepPaletteFade(const uint16_t* target, int count);
+void BootLogo();
+void SegaLogoAndIntro();
+void SetIntroVdpRegs();
 void WaitFrames(uint16_t n);
 void ClearCram();
 void ClearVram();
-void LoadPaletteLine(int line, uint32_t src);
-void LoadTilesAt(uint16_t tile, uint16_t n, uint32_t src);
+void LoadPaletteLine(int line, const uint16_t* src);
+void LoadTilesAt(uint16_t tile, uint16_t n, const uint8_t* src);
 void SetVScrollA(uint16_t v);
 void SetVScrollB(uint16_t v);
-void LoadMap(uint32_t src, uint16_t dest, uint16_t w, uint16_t h, uint16_t pitch, uint16_t attr);
-void FadeIn(uint32_t src, uint16_t delay, int count = 64);
-void FadeOut(uint32_t src, uint16_t delay, int count = 64);
-void FadeFromWhite(uint32_t src, uint16_t delay, int count = 64);
-void FadeToWhite(uint32_t src, uint16_t delay, int count = 64);
+void LoadMap(const uint16_t* src, uint16_t dest, uint16_t w, uint16_t h, uint16_t pitch, uint16_t attr);
+void FadeIn(const uint16_t* src, uint16_t delay, int count = 64);
+void FadeOut(const uint16_t* src, uint16_t delay, int count = 64);
+void FadeFromWhite(const uint16_t* src, uint16_t delay, int count = 64);
+void FadeToWhite(const uint16_t* src, uint16_t delay, int count = 64);
 void FillPlaneA(uint16_t v);
 
 // title.cpp
-void sub_01CF36();
+void TitleScreen();
 
 // sound.cpp
 void sound_init();
 void PlaySound(uint16_t id);
-void sub_0C615A(uint16_t id);
-void sub_0C62E8();
-void sub_0C5DAC();
-void sub_0C633A();
-void sub_0C6344();
+void GemsPlaySound(uint16_t id);
+void StopMusic();
+void StopAllSound();
 
-// link.cpp
-void sub_01BFF0();
-void sub_01C03A(uint32_t packet);
-void sub_01C9A0(uint32_t a1);
 
 // player.cpp
-uint8_t sub_00E238(uint16_t d3);
+uint8_t CollisionShape(uint16_t d3);
 
-void sub_05711E();
+void SpinningSegaLogo();
 
 // level.cpp
 uint32_t gameplay_frame();
-void sub_000E78();
-void sub_000EB6();
-void loc_000F2A();
-void sub_001A0C();
-void sub_001C24();
-void sub_001CBC();
+void CarryInventory();
+void RestoreCarriedInventory();
+void GiveStartEquipment();
+extern int drawn_count;
+void GiveStartEquipment();
+void HideSprites();
+void FadeInGamePalette();
+void FadeOutGamePalette();
 
 // inventory.cpp
-void DrawAmmoDigits(uint16_t n);
-void sub_010A7A(uint32_t slot);
-void sub_0109E6();
-void sub_011C02();
-void sub_01125E();
-uint16_t sub_011286();
-uint16_t sub_0112F2();
-uint16_t sub_011084(uint16_t weapon);
-void sub_010B00();
-void sub_010B8C();
-uint16_t sub_010BD8(); // return d0
-uint16_t sub_010CC6();
-void sub_010DC0();
-void sub_010EAC();
-void sub_010F98();
-void sub_057E0C();
-void sub_057EC4();
-void sub_057F98();
-void sub_058720(uint32_t out);
+void DrawAmmoDigits(uint16_t n, uint16_t dest);
+void DrawInventorySlot(const WeaponSlot& slot, uint16_t dest);
+void ClearInventory();
+void SetFireAnim();
+void NextWeapon();
+uint16_t NightVisionOn();
+uint16_t NightVisionOff();
+uint16_t AddWeapon(uint16_t weapon);
+void UseItemCharge();
+void UseUpItem();
+uint16_t NightVisionCharge(); // return d0
+uint16_t LightCharge();
+void ScannerCharge();
+void ArmourCharge();
+void ShieldCharge();
+void CountEnemiesLeft();
+void StoreLevelPassword();
+void StoreAreaPassword();
+void EncodePassword(uint8_t* out);
 
 // hud.cpp
-void sub_01E00E(uint16_t n);
-void sub_01E0C2(uint32_t msg);
-void sub_01E0DE();
-void sub_01E2CC();
-void sub_01E0FA();
-void sub_00D98E();
+void DrawEnemyCounter(uint16_t n);
+void QueueMessage(Msg msg);
+void queue_saved_message(); // PC: "GAME SAVED" in the message box
+void ClearMessages();
+void PlaySpeech();
+void UpdateMessages();
+void DrawHealthBar();
 
 // still to translate
-void sub_00B8FC(uint16_t level);
-void sub_00B9A6();
-void sub_01C9CA();
-uint16_t sub_0CAA4E(uint16_t story, uint32_t a1);
-void sub_0C6362(uint32_t a1);
-uint16_t sub_058A74(uint32_t password); // d7: 0xFFFF = invalid
-void sub_10B11A();
+void ChangeLevel(uint16_t level);
+void RenderFromBehind();
+void TitleMenu();
+uint16_t StoryScreen(uint16_t story, uint32_t a1);
+void CharacterSelect(uint32_t a1);
+uint16_t DecodePassword(const uint8_t* password); // d7: 0xFFFF = invalid
+void OptionsScreen();
 
 // player.cpp (movement)
-void loc_00A1D2();
-void sub_00DAB8();
-void sub_00EC1C();
-void sub_00A9CE(uint16_t level);
-uint16_t sub_00B33A(uint32_t a0);
-void sub_00B35C();
-void loc_00B48A();
-void PickupItem(uint32_t a0, uint8_t d3);
-void CellUseHandler(uint32_t addr, uint32_t a0, uint16_t d3); // targets of table 0xE420
-void sub_00D7DC(uint16_t d0, uint16_t d3, uint16_t d4);
-void sub_00D800(uint16_t d0, uint16_t d3, uint16_t d4); // player hit
-void sub_00D940();
+void FloorCellUnderPlayer();
+void PlayerControls();
+void HeadBob();
+void ApplyLevelCellVariants(uint16_t level);
+uint16_t DoorOpening(Cell a0);
+void UpdateDoors();
+void ResetDoors();
+void PickupItem(Cell a0, uint8_t d3);
+void CellUseHandler(CellUse use, Cell a0, uint16_t d3);
+void HitPlayerIgnoreArmour(uint16_t d0, uint16_t d3, uint16_t d4);
+void HitPlayer(uint16_t d0, uint16_t d3, uint16_t d4); // player hit
+void HealthWarnings();
 
 // status.cpp
-void sub_0029DA();
-void sub_002CDC();
-void sub_002CEC();
-void sub_002FA0();
-uint16_t sub_001D46(uint16_t mode); // returns d0
-uint16_t sub_001D66(uint16_t mode);
-uint16_t sub_00D494();
-uint16_t sub_00D49A();
-void sub_0022BE();
-void sub_0023C2();
+void DrawHud();
+void VdpDelay();
+void MapScreen();
+void DrawLevelMap();
+uint16_t SetLighting(uint16_t mode); // returns d0
+uint16_t ApplyLighting(uint16_t mode);
+uint16_t BuildBackdrop();
+// The attract demo of the area (tables/demo_N.txt): the random seed, then
+// the pad bits of each frame.
+inline const std::vector<uint8_t>& demo_inputs() {
+    static const char* files[3] = {"tables/demo_0.txt", "tables/demo_1.txt", "tables/demo_2.txt"};
+    return assets::hex(files[st.cur_area == 0 ? 0 : st.cur_area == 1 ? 1 : 2]);
+}
+// The backdrop map (st.backdrop_in): 128x16 cells, tiles at 0x141.
+inline const uint16_t* backdrop_map() {
+    static std::vector<uint16_t> maps[2];
+    std::vector<uint16_t>& m = maps[st.backdrop_in ? 1 : 0];
+    if (m.empty())
+        for (uint16_t e : assets::tilemap(st.backdrop_in ? "render/panorama_in.png" : "render/panorama_out.png").map)
+            m.push_back(uint16_t(e + 0x141));
+    return m.data();
+}
+uint16_t UpdateBackdrop();
+void AnimateFaces();
+void RunFaceScripts();
 
 // radar.cpp
 void DrawRadar();
-void sub_00E3C4(uint32_t a0);
-void sub_00E3F8(uint32_t a0);
-uint32_t sub_00E966(uint32_t a2, uint16_t d5);
-uint32_t sub_00EB5A(uint32_t a2, uint16_t d5);
+void UsePickupCell(Cell a0);
+void UseCell(Cell a0);
+uint16_t RadarPlayerDots(uint16_t a2, uint16_t d5);
+uint16_t RadarEnemyDots(uint16_t a2, uint16_t d5);
 
 // enemy.cpp
-void sub_013182();
-void sub_0131E8();
-void sub_0133A4();
-void sub_013554(uint32_t a0);
-void sub_0149DE();
-void sub_0168AC();
+void UpdateItemCharges();
+void RunEnemies();
+void ClearEnemies();
+void RemoveEnemy(Enemy* a0);
+void DropItemNearPlayer();
+void KillAllEnemies();
 
 // weapon.cpp
-void sub_00ECC0();
-void sub_00ECE2();
+void UndoHeadBob();
+void StatusSprites();
 
 // sky.cpp
-void h_002682();
-uint32_t sub_002404(uint32_t a2);
-void sub_0028B4(uint16_t d0);
-void sub_0029BA();
+void StartFlash();
+uint16_t SkySprites(uint16_t a2);
+// PC: the sprite list end and link where 0xECE2 put the sky sprites, so the
+// in-between views (level.cpp) can redo them.
+extern uint16_t sky_sprites;
+extern uint16_t sky_link;
+void StartBolt(uint16_t d0);
 
 } // namespace game

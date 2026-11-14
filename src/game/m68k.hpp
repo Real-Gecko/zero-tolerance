@@ -24,6 +24,5 @@ inline uint32_t divu(uint32_t reg, uint16_t divisor) {
 
 inline uint32_t ext_l(uint32_t w) { return uint32_t(int32_t(int16_t(uint16_t(w)))); }
 inline uint16_t lo(uint32_t v) { return uint16_t(v); }
-inline int16_t slo(uint32_t v) { return int16_t(uint16_t(v)); }
 
 } // namespace game

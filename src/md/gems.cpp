@@ -41,8 +41,6 @@ void stop_all() {
     if (audio) audio->stop_music();
 }
 
-void pause_all() { if (audio) audio->pause_music(true); }
-void resume_all() { if (audio) audio->pause_music(false); }
 void program(int ch, int p) { patch[ch & 15] = p; }
 void dac_rate(int ch, int r) { rate[ch & 15] = r; }
 

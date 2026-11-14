@@ -1,6 +1,7 @@
 // Radar: the 10x10 cell map around the player, the player and enemy dots
 // (0xE816-0xEBDE) and the cell-use calls made when the player enters a cell.
 #include "game.hpp"
+#include "display.hpp"
 
 #include "../host.hpp"
 
@@ -10,17 +11,16 @@ namespace {
 
 int16_t s16(uint16_t v) { return int16_t(v); }
 
-U16 radar_x{0xFF0DE8}, radar_y{0xFF0DEA};
-U16 player_dirx{0xFF0E00}, player_diry{0xFF0E02};
-U16 spr_link{0xFF0042};
+auto& radar_x = st.radar_x;
+auto& radar_y = st.radar_y;
+auto& player_dirx = st.dir_x;
+auto& player_diry = st.dir_y;
+auto& spr_link = st.sprite_link;
 
-uint32_t put_sprite(uint32_t a2, uint16_t y, uint16_t attr, uint16_t x) {
-    wr16(a2, y);
-    wr16(a2 + 2, spr_link);
+uint16_t put_sprite(uint16_t a2, uint16_t y, uint16_t attr, uint16_t x) {
+    st.sprites[a2] = {y, spr_link, attr, x};
     spr_link = uint16_t(spr_link + 1);
-    wr16(a2 + 4, attr);
-    wr16(a2 + 6, x);
-    return a2 + 8;
+    return uint16_t(a2 + 1);
 }
 
 uint16_t clamp_radar(uint16_t v) {
@@ -29,42 +29,41 @@ uint16_t clamp_radar(uint16_t v) {
     return v;
 }
 
-uint32_t player_cell() {
-    return cur_map_ptr + (player_x >> 8) + ((player_y >> 8) << 5);
+Cell player_cell() {
+    return cur_map + (player_x >> 8) + ((player_y >> 8) << 5);
 }
 
-uint32_t radar_origin() {
-    return cur_map_ptr + int16_t(uint16_t((s16(radar_x) >> 8) - 5)) + int16_t(uint16_t(((s16(radar_y) >> 8) - 5) << 5));
+Cell radar_origin() {
+    return cur_map + int16_t(uint16_t((s16(radar_x) >> 8) - 5)) + int16_t(uint16_t(((s16(radar_y) >> 8) - 5) << 5));
 }
 
-uint16_t radar_tile(uint32_t a1) {
-    return uint16_t(0xE347 + sub_00E238(rd8(cell_class + rd8(a1))));
+uint16_t radar_tile(Cell a1) {
+    return uint16_t(0xE347 + CollisionShape(st.cell_class[map_cell(a1)]));
 }
 
 } // namespace
 
 // 0xE3C4: runs the cell-use handler of the cell at a0 if it is a pickup.
-void sub_00E3C4(uint32_t a0) {
-    U16{0xFF2728} = 0;
-    uint8_t cls = rd8(cell_class + rd8(a0));
+void UsePickupCell(Cell a0) {
+    st.pickup_check = 0;
+    uint8_t cls = st.cell_class[map_cell(a0)];
     if (cls <= 5 || cls > 0x82) return;
-    uint32_t addr = rd32(0xE420 + cls * 4);
-    if (addr == 0x11AB4) CellUseHandler(addr, a0, cls);
+    if (kCellUse[cls] == CellUse::Pickup) CellUseHandler(CellUse::Pickup, a0, cls);
 }
 
 // 0xE3F8: runs the cell-use handler of the cell at a0.
-void sub_00E3F8(uint32_t a0) {
-    uint8_t cls = rd8(cell_class + rd8(a0));
+void UseCell(Cell a0) {
+    uint8_t cls = st.cell_class[map_cell(a0)];
     if (cls <= 5 || cls > 0x82) return;
-    CellUseHandler(rd32(0xE420 + cls * 4), a0, cls);
+    CellUseHandler(kCellUse[cls], a0, cls);
 }
 
 // 0xE966: the player dot and, every other frame, three dots ahead of it.
-uint32_t sub_00E966(uint32_t a2, uint16_t d5) {
+uint16_t RadarPlayerDots(uint16_t a2, uint16_t d5) {
     uint16_t y = uint16_t((s16(uint16_t(player_y - (radar_y & 0xFF00))) >> 5) + 0x12E);
     uint16_t x = uint16_t((s16(uint16_t(player_x - (radar_x & 0xFF00))) >> 5) + 0x10E);
     a2 = put_sprite(a2, y, d5, x);
-    if (!(U8{0xFF0EB7} & 1)) return a2;
+    if (!(uint8_t(st.frame) & 1)) return a2;
     a2 = put_sprite(a2, uint16_t(y + (s16(player_diry) >> 6)), 0xE34F, uint16_t(x + (s16(player_dirx) >> 6)));
     a2 = put_sprite(a2, uint16_t(y + (s16(player_diry) >> 5)), 0xE34F, uint16_t(x + (s16(player_dirx) >> 5)));
     int16_t dy = int16_t(s16(player_diry) >> 5), dx = int16_t(s16(player_dirx) >> 5);
@@ -72,15 +71,15 @@ uint32_t sub_00E966(uint32_t a2, uint16_t d5) {
 }
 
 // 0xEB5A: dots for the enemies of this level inside the radar.
-uint32_t sub_00EB5A(uint32_t a2, uint16_t d5) {
-    uint16_t n = U16{0xFF24E8};
+uint16_t RadarEnemyDots(uint16_t a2, uint16_t d5) {
+    uint16_t n = st.object_count;
     if (!n) return a2;
-    uint32_t a0 = U32{0xFF24EA};
+    Enemy* a0 = first_object();
     int16_t left = int16_t(uint16_t((radar_x & 0xFF00) - 0x500)), right = int16_t(uint16_t((radar_x & 0xFF00) + 0x500));
     int16_t top = int16_t(uint16_t((radar_y & 0xFF00) - 0x500)), bottom = int16_t(uint16_t((radar_y & 0xFF00) + 0x500));
-    for (; n; n--, a0 = rd32(a0)) {
-        if (!(rd16(a0 + 4) & 0x10) || rd8(a0 + 0x32) != uint8_t(cur_level)) continue;
-        int16_t x = int16_t(rd16(a0 + 0x20)), y = int16_t(rd16(a0 + 0x22));
+    for (; n; n--, a0 = next_object(a0)) {
+        if (!(a0->flags & 0x10) || a0->level != uint8_t(cur_level)) continue;
+        int16_t x = int16_t(a0->x), y = int16_t(a0->y);
         if (x >= right || x < left || y >= bottom || y < top) continue;
         a2 = put_sprite(a2, uint16_t((int16_t(uint16_t(y - top)) >> 5) + 0x106), d5,
                         uint16_t((int16_t(uint16_t(x - left)) >> 5) + 0xE6));
@@ -94,58 +93,56 @@ void DrawRadar() {
     radar_x = clamp_radar(player_x);
     radar_y = clamp_radar(player_y);
     while (fb_dma_pending) host::frame();
-    uint16_t blink = U16{0xFF0EB6} & 7;
-    if (s16(U16{0xFF1062}) < 0) {
-        uint32_t a0 = player_cell();
-        U32{0xFF0E12} = a0;
+    uint16_t blink = st.frame & 7;
+    if (s16(st.scanner_slot) < 0) {
+        Cell a0 = player_cell();
+        st.player_cell = a0;
         bool redraw = true;
-        if (a0 == U32{0xFF0E16}) {
-            if (U16{0xFF2728}) sub_00E3C4(a0);
-            redraw = U16{0xFF0EB8} != 0;
+        if (a0 == st.last_cell) {
+            if (st.pickup_check) UsePickupCell(a0);
+            redraw = st.radar_redraw != 0;
         } else {
-            U32{0xFF0E16} = a0;
-            sub_00E3F8(a0);
+            st.last_cell = a0;
+            UseCell(a0);
         }
         if (redraw) {
-            U16{0xFF0EB8} = 0;
+            st.radar_redraw = 0;
             uint16_t nt = 0xC81A;
-            uint32_t row = radar_origin();
+            Cell row = radar_origin();
             for (int y = 0; y < 10; y++, row += 0x20) {
                 nt = uint16_t(nt + 0x80);
-                vdp_write_addr(nt);
-                for (int x = 0; x < 10; x++) vdp_data(radar_tile(row + x));
+                for (int x = 0; x < 10; x++) display::write_cell(uint16_t(nt + x * 2), radar_tile(row + x));
             }
         }
-        uint32_t a2 = U32{0xFF003E};
-        uint16_t d5 = rd16(0xE956 + blink * 2);
-        a2 = sub_00E966(a2, d5);
-        U32{0xFF003E} = sub_00EB5A(a2, uint16_t(d5 + 5));
+        uint16_t a2 = st.sprite_end;
+        uint16_t d5 = kRadarBlinkA[blink];
+        a2 = RadarPlayerDots(a2, d5);
+        st.sprite_end = RadarEnemyDots(a2, uint16_t(d5 + 5));
         return;
     }
-    uint32_t a2 = U32{0xFF003E};
-    uint16_t d5 = rd16(0xEB4A + blink * 2);
-    uint32_t a0 = player_cell();
-    U32{0xFF0E12} = a0;
-    if (U16{0xFF2728}) sub_00E3C4(a0);
-    if (a0 != U32{0xFF0E16}) {
-        U32{0xFF0E16} = a0;
-        sub_00E3F8(a0);
+    uint16_t a2 = st.sprite_end;
+    uint16_t d5 = kRadarBlinkB[blink];
+    Cell a0 = player_cell();
+    st.player_cell = a0;
+    if (st.pickup_check) UsePickupCell(a0);
+    if (a0 != st.last_cell) {
+        st.last_cell = a0;
+        UseCell(a0);
     }
     uint16_t nt = 0xC81A, sy = 0x10A;
-    uint32_t row = radar_origin();
+    Cell row = radar_origin();
     for (int y = 0; y < 10; y++, row += 0x20, sy = uint16_t(sy + 8)) {
         nt = uint16_t(nt + 0x80);
-        vdp_write_addr(nt);
         uint16_t sx = 0xEA;
         for (int x = 0; x < 10; x++, sx = uint16_t(sx + 8)) {
-            uint8_t cls = rd8(cell_class + rd8(row + x));
+            uint8_t cls = st.cell_class[map_cell(row + x)];
             if ((cls >= 0x29 && cls <= 0x2B) || (cls >= 0x65 && cls <= 0x6B))
                 a2 = put_sprite(a2, sy, uint16_t(d5 + 5), sx);
-            vdp_data(radar_tile(row + x));
+            display::write_cell(uint16_t(nt + x * 2), radar_tile(row + x));
         }
     }
-    a2 = sub_00E966(a2, d5);
-    U32{0xFF003E} = sub_00EB5A(a2, uint16_t(d5 + 5));
+    a2 = RadarPlayerDots(a2, d5);
+    st.sprite_end = RadarEnemyDots(a2, uint16_t(d5 + 5));
 }
 
 } // namespace game

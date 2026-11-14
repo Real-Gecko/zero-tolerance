@@ -8,11 +8,6 @@ namespace game {
 
 namespace {
 
-U16 enemy_count{0xFF24E8};
-U32 enemy_list{0xFF24EA};
-constexpr uint32_t player_struct = 0xFF119C;
-constexpr uint32_t area_maps = 0xFF7CD6; // 16 levels x 0x400
-
 int16_t s16(uint16_t v) { return int16_t(v); }
 
 // Map index of a position: (x >> 8) + (y & 0xFF00) >> 3.
@@ -21,7 +16,7 @@ int16_t cell_index(uint16_t x, uint16_t y) {
 }
 
 // 0x14852: nonzero when cell class d3 blocks enemies.
-uint8_t sub_014852(uint8_t cls) { return rd8(0x14858 + cls); }
+uint8_t CellBlocksEnemy(uint8_t cls) { return kEnemyBlocked[cls]; }
 
 // Diagonal wall shapes 2-5 (0xE23E): 1 when (xlo, ylo) is inside the wall half.
 uint8_t diagonal_hit(uint8_t shape, uint8_t xlo, uint8_t ylo) {
@@ -35,17 +30,17 @@ uint8_t diagonal_hit(uint8_t shape, uint8_t xlo, uint8_t ylo) {
 }
 
 // 0x165D8 / 0x166E8: 1 when a wall lies on the line from (d3, d4) to (d0, d1),
-// in the map at a1 (cur_map_ptr or the enemy's level).
-uint16_t line_blocked(bool own_map, uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) {
+// in the map at a1 (cur_map or the enemy's level).
+uint16_t line_blocked(bool own_map, Enemy* a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) {
     uint16_t d2 = uint16_t(Distance(s16(uint16_t(d0 - d3)), s16(uint16_t(d1 - d4))) >> 6);
     if (d2 == 0 || d2 == 1) return 0;
     int16_t sx = int16_t(uint16_t(divs(ext_l(uint16_t(d3 - d0)), d2)));
     int16_t sy = int16_t(uint16_t(divs(ext_l(uint16_t(d4 - d1)), d2)));
     for (int n = d2 - 1; n > 0; n--) {
-        uint32_t a1 = own_map ? enemy_map(a0) : uint32_t(cur_map_ptr);
+        Cell a1 = own_map ? enemy_map(a0) : cur_map;
         d0 = uint16_t(d0 + sx);
         d1 = uint16_t(d1 + sy);
-        uint8_t shape = sub_00E238(rd8(cell_class + rd8(a1 + cell_index(d0, d1))));
+        uint8_t shape = CollisionShape(st.cell_class[map_cell(a1 + cell_index(d0, d1))]);
         if (!shape) continue;
         if (shape >= 6 || shape == 1) return 1;
         if (diagonal_hit(shape, uint8_t(d0), uint8_t(d1))) return 1;
@@ -53,55 +48,62 @@ uint16_t line_blocked(bool own_map, uint32_t a0, uint16_t d0, uint16_t d1, uint1
     return 0;
 }
 
-// 0x14454, 0x144FE, 0x14A56, 0x14B08: drops the item byte FF62C6[+0x47 or
-// +0x46] on the first empty cell around the enemy and removes the enemy.
+// 0x14454, 0x144FE, 0x14A56, 0x14B08: drops the item (the first cell of the
+// class in item_b or item_a) on the first empty cell around the enemy and
+// removes the enemy.
 // With every cell taken, keep = true leaves the enemy alone; counted calls
 // 0x57E0C first.
-void drop_item(uint32_t a0, uint16_t item_ofs, bool keep, bool counted) {
-    uint32_t a1 = enemy_map(a0) + cell_index(rd16(a0 + 0x20), rd16(a0 + 0x22));
+void drop_item(Enemy* a0, uint16_t item_ofs, bool keep, bool counted) {
+    Cell a1 = enemy_map(a0) + cell_index(a0->x, a0->y);
     static const int16_t around[] = {0, -1, 1, -0x20, 0x20, 0x1F, 0x21, -0x1F, -0x21};
     bool found = false;
     for (int16_t d : around) {
-        if (!rd8(a1 + d)) {
+        if (!map_cell(a1 + d)) {
             a1 += d;
             found = true;
             break;
         }
     }
-    if (found) {
-        if (a1 < 0xFF7CD6 || a1 >= 0xFFBCD6) a1 = 0xFFCCD6;
-        wr8(a1, rd8(0xFF62C6 + rd8(a0 + item_ofs)));
-        sub_01C9A0(a1);
-    } else if (keep)
+    if (found)
+        put_cell(a1, st.class_cell[item_ofs == 0x47 ? a0->item_b : a0->item_a]);
+    else if (keep)
         return;
     else if (counted)
-        sub_057E0C();
-    sub_013554(a0);
+        CountEnemiesLeft();
+    RemoveEnemy(a0);
 }
 
 } // namespace
 
+// The spawn templates by enemy type - 1 (0xAB0C).
+const EnemyTemplate kEnemyTemplates[10] = {
+    {Act::Type0Ai, Draw::Type0, Hit::Type0, Act::DieDropItem46Counted, 0xDC, 0x190, SpriteSet::Type0, 0x29, 0x2C, 0xFFE0, 0x2C},
+    {Act::Type1Ai, Draw::Type1, Hit::Type1, Act::DieDropItem46Counted, 0xDC, 0x190, SpriteSet::Type1, 0x2A, 0x6C, 0xFFE0, 0x2C},
+    {Act::Type2Ai, Draw::Type2, Hit::Type1, Act::DieDropItem46Counted, 0xDC, 0x320, SpriteSet::Type2, 0x2B, 0x6D, 0xFFE0, 0x22},
+    {Act::Type3Start, Draw::Type3, Hit::Type3, Act::DieDropItem46Counted, 0xDC, 0xC8, SpriteSet::Type3, 0x65, 0x6E, 0, 0x24},
+    {Act::Type4Ai, Draw::Type4, Hit::Type4, Act::DieDropItem46Counted, 0xDC, 0x190, SpriteSet::Type4, 0x66, 0x6F, 0xFFE0, 0x26},
+    {Act::Type5Ai, Draw::Type5, Hit::Walker, Act::DieDropItem46Keep, 0xDC, 0xBB8, SpriteSet::Type5, 0x67, 0x70, 0xFFE0, 0x28},
+    {Act::Type6Ai, Draw::Type6, Hit::Type6, Act::DieDropItem46Counted, 0x5C, 0x190, SpriteSet::Type6, 0x68, 0x71, 0xFFE0, 0x2A},
+    {Act::Type7Ai, Draw::Type7, Hit::Type7, Act::DieDropItem46Counted, 0xDC, 0x258, SpriteSet::Type7, 0x69, 0x72, 0xFFE0, 0x20},
+    {Act::Type8Ai, Draw::Type8, Hit::Type8, Act::DieDropItem46Keep, 0xDC, 0x1F40, SpriteSet::Type8, 0x6A, 0x73, 0xFFE0, 0x2E},
+    {Act::Type9Ai, Draw::Type9, Hit::Walker, Act::DieDropItem46Keep, 0xDC, 0x1770, SpriteSet::Type9, 0x6B, 0x74, 0xFFE0, 0x30},
+};
+
 // 0x1657A: map of the enemy's level.
-uint32_t enemy_map(uint32_t a0) { return area_maps + int16_t(uint16_t(rd8(a0 + 0x32) << 10)); }
+Cell enemy_map(const Enemy* a0) { return level_map(a0->level); }
 
 // 0xD740: sound d0 when the enemy is on the player's level.
-void sub_00D740(uint32_t a0, uint16_t id) {
-    uint8_t level = rd8(a0 + 0x32);
-    if (level == U8{0xFF1029}) sub_00D760(id);
-    if (link_mode && level == U8{0xFF121A}) {
-        wr8(0xFF0FFA, 8);
-        wr8(0xFF0FFB, uint8_t(id));
-        sub_01C03A(0xFF0FFA);
-    }
+void EnemySound(Enemy* a0, uint16_t id) {
+    if (a0->level == uint8_t(st.cur_level)) PlaySoundLocal(id);
 }
 
 // 0x145AA (margin 0x20) / 0x146FE (margin 0x40): moves the enemy by (d0, d1),
 // sliding along blocking cells, keeps it margin away from blocking
 // neighbours and 0x20 away from the player. Returns the movement done.
-EnemyMove move_enemy(uint32_t a0, uint16_t d0, uint16_t d1, uint8_t margin) {
-    uint16_t ox = rd16(a0 + 0x20), oy = rd16(a0 + 0x22);
-    uint32_t a1 = enemy_map(a0);
-    auto blocked = [&](int16_t i) { return sub_014852(rd8(cell_class + rd8(a1 + i))) != 0; };
+EnemyMove move_enemy(Enemy* a0, uint16_t d0, uint16_t d1, uint8_t margin) {
+    uint16_t ox = a0->x, oy = a0->y;
+    Cell a1 = enemy_map(a0);
+    auto blocked = [&](int16_t i) { return CellBlocksEnemy(st.cell_class[map_cell(a1 + i)]) != 0; };
     uint16_t x = ox, y = oy;
     if (!blocked(cell_index(uint16_t(x + d0), uint16_t(y + d1)))) {
         x = uint16_t(x + d0);
@@ -110,109 +112,86 @@ EnemyMove move_enemy(uint32_t a0, uint16_t d0, uint16_t d1, uint8_t margin) {
         y = uint16_t(y + d1);
     else if (!blocked(cell_index(uint16_t(x + d0), y)))
         x = uint16_t(x + d0);
-    wr16(a0 + 0x20, x);
-    wr16(a0 + 0x22, y);
+    a0->x = x;
+    a0->y = y;
     a1 += cell_index(x, y);
     uint8_t hi = uint8_t(0xFF - margin);
-    uint8_t xl = rd8(a0 + 0x21);
+    uint8_t xl = uint8_t(a0->x);
     if (xl < margin) {
-        if (sub_014852(rd8(cell_class + rd8(a1 - 1)))) wr8(a0 + 0x21, margin);
+        if (CellBlocksEnemy(st.cell_class[map_cell(a1 - 1)])) set_low_byte(a0->x, margin);
     } else if (xl > hi) {
-        if (sub_014852(rd8(cell_class + rd8(a1 + 1)))) wr8(a0 + 0x21, hi);
+        if (CellBlocksEnemy(st.cell_class[map_cell(a1 + 1)])) set_low_byte(a0->x, hi);
     }
-    uint8_t yl = rd8(a0 + 0x23);
+    uint8_t yl = uint8_t(a0->y);
     if (yl < margin) {
-        if (sub_014852(rd8(cell_class + rd8(a1 - 0x20)))) wr8(a0 + 0x23, margin);
+        if (CellBlocksEnemy(st.cell_class[map_cell(a1 - 0x20)])) set_low_byte(a0->y, margin);
     } else if (yl > hi) {
-        if (sub_014852(rd8(cell_class + rd8(a1 + 0x20)))) wr8(a0 + 0x23, hi);
+        if (CellBlocksEnemy(st.cell_class[map_cell(a1 + 0x20)])) set_low_byte(a0->y, hi);
     }
-    uint16_t dx = uint16_t(rd16(a0 + 0x20) - player_x), dy = uint16_t(rd16(a0 + 0x22) - player_y);
+    uint16_t dx = uint16_t(a0->x - player_x), dy = uint16_t(a0->y - player_y);
     uint16_t d = uint16_t(Distance(s16(dx), s16(dy)) + 1);
     if (d != 0 && d < 0x20) {
-        wr16(a0 + 0x20, uint16_t(uint16_t(divs(ext_l(dx) << 5, d)) + player_x));
-        wr16(a0 + 0x22, uint16_t(uint16_t(divs(ext_l(dy) << 5, d)) + player_y));
+        a0->x = uint16_t(uint16_t(divs(ext_l(dx) << 5, d)) + player_x);
+        a0->y = uint16_t(uint16_t(divs(ext_l(dy) << 5, d)) + player_y);
     }
-    return {uint16_t(rd16(a0 + 0x20) - ox), uint16_t(rd16(a0 + 0x22) - oy)};
+    return {uint16_t(a0->x - ox), uint16_t(a0->y - oy)};
 }
 
-EnemyMove sub_0145AA(uint32_t a0, uint16_t d0, uint16_t d1) { return move_enemy(a0, d0, d1, 0x20); }
-EnemyMove sub_0146FE(uint32_t a0, uint16_t d0, uint16_t d1) { return move_enemy(a0, d0, d1, 0x40); }
+EnemyMove MoveEnemyNarrow(Enemy* a0, uint16_t d0, uint16_t d1) { return move_enemy(a0, d0, d1, 0x20); } // 0x145AA
+EnemyMove MoveEnemyWide(Enemy* a0, uint16_t d0, uint16_t d1) { return move_enemy(a0, d0, d1, 0x40); } // 0x146FE
 
 // 0x13D42 (map of the enemy's level) / 0x13D48 (current map): the collision
 // shape at (d0, d1): 0 free, 1 wall, >= 6 the shape itself.
-uint8_t sub_013D42(uint32_t a0, uint16_t d0, uint16_t d1) {
-    uint8_t shape = sub_00E238(rd8(cell_class + rd8(enemy_map(a0) + cell_index(d0, d1))));
+uint8_t EnemyCollisionShape(Enemy* a0, uint16_t d0, uint16_t d1) {
+    uint8_t shape = CollisionShape(st.cell_class[map_cell(enemy_map(a0) + cell_index(d0, d1))]);
     if (shape == 0 || shape == 1 || shape >= 6) return shape;
     return diagonal_hit(shape, uint8_t(d0), uint8_t(d1));
 }
 
 // 0x13CBC: 1 when the cell at (d0, d1) of the enemy's level is one that
 // shots pass over (per area).
-uint16_t sub_013CBC(uint32_t a0, uint16_t d0, uint16_t d1) {
-    uint8_t c = rd8(enemy_map(a0) + cell_index(d0, d1));
+uint16_t EnemyMapShotPasses(Enemy* a0, uint16_t d0, uint16_t d1) {
+    uint8_t c = map_cell(enemy_map(a0) + cell_index(d0, d1));
     if (cur_area == 0) return c == 1 || c == 0x6E || c == 0x6F || (c >= 0x91 && c <= 0x96);
     if (cur_area == 1) {
         if (c == 1 || c == 0x8F || c == 0xA3) return 1;
-        if (s16(rd16(a0 + 0x24)) < 0) return 0;
+        if (s16(a0->z) < 0) return 0;
         return c == 3 || c == 0xA2 || (c >= 6 && c <= 8);
     }
     return 0;
 }
 
-// 0x1642C: the enemy's target: the player when on the enemy's level, else 0
-// (in a link game, the nearer of the two players).
-uint32_t sub_01642C(uint32_t a0) {
-    uint8_t level = rd8(a0 + 0x32);
-    if (link_mode) {
-        uint32_t a1 = enemy_list;
-        if (rd8(a1 + 0x32) == level) {
-            if (uint8_t(cur_level) != level) return a1;
-            uint16_t other = Distance(s16(uint16_t(rd16(a1 + 0x20) - rd16(a0 + 0x20))), s16(uint16_t(rd16(a1 + 0x22) - rd16(a0 + 0x22))));
-            uint16_t me = Distance(s16(uint16_t(player_x - rd16(a0 + 0x20))), s16(uint16_t(player_y - rd16(a0 + 0x22))));
-            return other < me ? a1 : player_struct;
-        }
-    }
-    return uint8_t(cur_level) == level ? player_struct : 0;
+// 0x1642C: the enemy's target: the player when on the enemy's level, else
+// none (in a link game, the nearer of the two players).
+Enemy* FindTarget(Enemy* a0) {
+    uint8_t level = a0->level;
+    return uint8_t(cur_level) == level ? player_struct : nullptr;
 }
 
 // 0x1649C: like 0x1642C, preferring a target in sight in a link game.
-uint32_t sub_01649C(uint32_t a0) {
-    uint8_t level = rd8(a0 + 0x32);
-    if (link_mode) {
-        uint32_t a1 = enemy_list;
-        if (rd8(a1 + 0x32) == level) {
-            if (uint8_t(cur_level) != level) return a1;
-            uint16_t ex = rd16(a0 + 0x20), ey = rd16(a0 + 0x22);
-            bool other_hidden = sub_0166A0(a0, rd16(a1 + 0x20), rd16(a1 + 0x22), ex, ey);
-            bool me_hidden = sub_0166A0(a0, player_x, player_y, ex, ey);
-            if (!other_hidden && me_hidden) return a1;
-            if (other_hidden && !me_hidden) return player_struct;
-            uint16_t other = Distance(s16(uint16_t(rd16(a1 + 0x20) - ex)), s16(uint16_t(rd16(a1 + 0x22) - ey)));
-            uint16_t me = Distance(s16(uint16_t(player_x - ex)), s16(uint16_t(player_y - ey)));
-            return other < me ? a1 : player_struct;
-        }
-    }
-    return uint8_t(cur_level) == level ? player_struct : 0;
+Enemy* FindVisibleTarget(Enemy* a0) {
+    uint8_t level = a0->level;
+    return uint8_t(cur_level) == level ? player_struct : nullptr;
 }
 
 // 0x165D8 / 0x166E8 (see line_blocked).
-uint16_t sub_0165D8(uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) { return line_blocked(false, a0, d0, d1, d3, d4); }
-uint16_t sub_0166E8(uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) { return line_blocked(true, a0, d0, d1, d3, d4); }
+uint16_t LineBlocked(Enemy* a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) { return line_blocked(false, a0, d0, d1, d3, d4); }
+uint16_t EnemyLineBlocked(Enemy* a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) { return line_blocked(true, a0, d0, d1, d3, d4); }
 
-// 0x13D48: sub_013D42 on the current map.
-uint8_t sub_013D48(uint16_t d0, uint16_t d1) {
-    uint8_t shape = sub_00E238(rd8(cell_class + rd8(cur_map_ptr + cell_index(d0, d1))));
+// 0x13D48: EnemyCollisionShape on the current map.
+uint8_t MapCollisionShape(uint16_t d0, uint16_t d1) {
+    uint8_t shape = CollisionShape(st.cell_class[map_cell(cur_map + cell_index(d0, d1))]);
     if (shape == 0 || shape == 1 || shape >= 6) return shape;
     return diagonal_hit(shape, uint8_t(d0), uint8_t(d1));
 }
 
-// 0x13C36: sub_013CBC on the current map, by the player's height.
-uint16_t sub_013C36(uint16_t d0, uint16_t d1) {
-    uint8_t c = rd8(cur_map_ptr + cell_index(d0, d1));
+// 0x13C36: EnemyMapShotPasses on the current map, by the player's height.
+uint16_t MapShotPasses(uint16_t d0, uint16_t d1) {
+    uint8_t c = map_cell(cur_map + cell_index(d0, d1));
     if (cur_area == 0) return c == 1 || c == 0x6E || c == 0x6F || (c >= 0x91 && c <= 0x96);
     if (cur_area == 1) {
         if (c == 1 || c == 0x8F || c == 0xA3) return 1;
-        if (s16(U16{0xFF0E1A}) < 0) return 0;
+        if (s16(st.view_z) < 0) return 0;
         return c == 3 || c == 0xA2 || (c >= 6 && c <= 8);
     }
     return 0;
@@ -220,37 +199,37 @@ uint16_t sub_013C36(uint16_t d0, uint16_t d1) {
 
 // 0xA8B6: nonzero when the player's cell (FF0E12) is one of the classes of
 // table 0xA8CC.
-uint8_t sub_00A8B6() { return rd8(0xA8CC + rd8(cell_class + rd8(U32{0xFF0E12}))); }
+uint8_t PlayerCellStopsShots() { return kStopsShots[st.cell_class[map_cell(st.player_cell)]]; }
 
 // 0x16388: the nearest enemy to a0 (or the player for a0 = 0) on its level
-// whose flags include all of d5; 0 for the player, 0xFFFFFFFF for none.
-uint32_t sub_016388(uint32_t a0, uint16_t d5) {
-    uint32_t a1 = 0xFFFFFFFF;
+// whose flags include all of d5, as a target code: kPlayerPos for the
+// player, kNoTarget for none.
+uint8_t NearestEnemy(Enemy* a0, uint16_t d5) {
+    uint8_t a1 = kNoTarget;
     uint16_t best = 0xFFFF, x = player_x, y = player_y;
     uint8_t level = uint8_t(cur_level);
     if (a0) {
-        x = rd16(a0 + 0x20);
-        y = rd16(a0 + 0x22);
-        level = rd8(a0 + 0x32);
+        x = a0->x;
+        y = a0->y;
+        level = a0->level;
     }
-    U16 left{0xFF0FF8};
-    left = enemy_count;
+    uint16_t left = st.object_count;
     if (left) {
-        uint32_t a3 = enemy_list;
+        Enemy* a3 = first_object();
         do {
-            if (a3 != a0 && (rd16(a3 + 4) & d5) == d5 && rd8(a3 + 0x32) == level) {
-                uint16_t d = Distance(s16(uint16_t(x - rd16(a3 + 0x20))), s16(uint16_t(y - rd16(a3 + 0x22))));
+            if (a3 != a0 && (a3->flags & d5) == d5 && a3->level == level) {
+                uint16_t d = Distance(s16(uint16_t(x - a3->x)), s16(uint16_t(y - a3->y)));
                 if (d < best) {
                     best = d;
-                    a1 = a3;
+                    a1 = slot_of(a3);
                 }
             }
-            a3 = rd32(a3);
+            a3 = next_object(a3);
             left = uint16_t(left - 1);
         } while (left);
     }
-    if (a0 && (0xDA & d5) == d5 && level == U8{0xFF1029}) {
-        if (Distance(s16(uint16_t(x - player_x)), s16(uint16_t(y - player_y))) < best) a1 = 0;
+    if (a0 && (0xDA & d5) == d5 && level == uint8_t(st.cur_level)) {
+        if (Distance(s16(uint16_t(x - player_x)), s16(uint16_t(y - player_y))) < best) a1 = kPlayerPos;
     }
     return a1;
 }
@@ -258,22 +237,21 @@ uint32_t sub_016388(uint32_t a0, uint16_t d5) {
 // 0x167B0: the enemy in the aim cone (width d1, column d2) nearest to the
 // view, nearer than the wall in the middle column (FF61A6); also lets a shot
 // at the sky hit the flash (0x29BA).
-TargetResult sub_0167B0(uint16_t d1, uint16_t d2) {
-    TargetResult r{0, 0};
-    uint16_t n = enemy_count;
+TargetResult FindAimTarget(uint16_t d1, uint16_t d2) {
+    TargetResult r{nullptr, 0};
+    uint16_t n = st.object_count;
     if (n) {
-        uint32_t a0 = enemy_list;
-        r.d0 = U16{0xFF61A6};
+        Enemy* a0 = first_object();
+        r.d0 = view.depth[0x40];
         uint16_t mask = 0x40;
-        if (s16(U16{0xFF0E1A}) > 0)
+        if (s16(st.view_z) > 0)
             mask = 0x80;
-        else if (s16(U16{0xFF0E1A}) < 0)
+        else if (s16(st.view_z) < 0)
             mask = 0x08;
-        U16{0xFF1068} = mask;
-        for (; n; n--, a0 = rd32(a0)) {
-            if (!(rd16(a0 + 4) & mask) || rd8(a0 + 0x32) != uint8_t(cur_level)) continue;
-            int16_t ex = s16(uint16_t(rd16(a0 + 0x20) - player_x)), ey = s16(uint16_t(rd16(a0 + 0x22) - player_y));
-            int16_t dx = s16(U16{0xFF0E00}), dy = s16(U16{0xFF0E02});
+        for (; n; n--, a0 = next_object(a0)) {
+            if (!(a0->flags & mask) || a0->level != uint8_t(cur_level)) continue;
+            int16_t ex = s16(uint16_t(a0->x - player_x)), ey = s16(uint16_t(a0->y - player_y));
+            int16_t dx = s16(st.dir_x), dy = s16(st.dir_y);
             int32_t along = (int32_t(ex) * dx + int32_t(ey) * dy) >> 6;
             int32_t side = int32_t(ey) * dx - int32_t(ex) * dy;
             if (along < 2) continue;
@@ -287,29 +265,23 @@ TargetResult sub_0167B0(uint16_t d1, uint16_t d2) {
             r.d0 = d5;
         }
     }
-    if (cur_level || !U8{0xFF1074}) return r;
-    uint8_t cls = rd8(cell_class + rd8(U32{0xFF0E12}));
-    if (cls != 0x28 && !(s16(U16{0xFF0E1A}) >= -5 && cls == 0x27)) return r;
-    int16_t d = int16_t(uint16_t((d2 << 1) + 0x9E - U16{0xFF107A}));
+    if (cur_level || !st.sky_flash) return r;
+    uint8_t cls = st.cell_class[map_cell(st.player_cell)];
+    if (cls != 0x28 && !(s16(st.view_z) >= -5 && cls == 0x27)) return r;
+    int16_t d = int16_t(uint16_t((d2 << 1) + 0x9E - st.flash_col));
     if (d < 0) d = int16_t(-d);
     if (uint16_t(d) <= 3) {
-        U8{0xFF1078} = 0x20;
-        sub_0029BA();
+        st.flash_time = 0x20;
     }
     return r;
 }
 
-// 0x16590 / 0x166A0: line of sight from (d3, d4) to (d0, d1) also checked
-// from 0x1C to each side; true when any line is blocked.
-bool sub_016590(uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) {
-    return sub_0165D8(a0, d0, d1, d3, d4) || sub_0165D8(a0, d0, d1, uint16_t(d3 + 0x1C), d4) ||
-           sub_0165D8(a0, d0, d1, uint16_t(d3 - 0x1C), d4) || sub_0165D8(a0, d0, d1, d3, uint16_t(d4 + 0x1C)) ||
-           sub_0165D8(a0, d0, d1, d3, uint16_t(d4 - 0x1C));
-}
-bool sub_0166A0(uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) {
-    return sub_0166E8(a0, d0, d1, d3, d4) || sub_0166E8(a0, d0, d1, uint16_t(d3 + 0x1C), d4) ||
-           sub_0166E8(a0, d0, d1, uint16_t(d3 - 0x1C), d4) || sub_0166E8(a0, d0, d1, d3, uint16_t(d4 + 0x1C)) ||
-           sub_0166E8(a0, d0, d1, d3, uint16_t(d4 - 0x1C));
+// 0x166A0: line of sight from (d3, d4) to (d0, d1) also checked from 0x1C
+// to each side; true when any line is blocked.
+bool EnemySightBlocked(Enemy* a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4) {
+    return EnemyLineBlocked(a0, d0, d1, d3, d4) || EnemyLineBlocked(a0, d0, d1, uint16_t(d3 + 0x1C), d4) ||
+           EnemyLineBlocked(a0, d0, d1, uint16_t(d3 - 0x1C), d4) || EnemyLineBlocked(a0, d0, d1, d3, uint16_t(d4 + 0x1C)) ||
+           EnemyLineBlocked(a0, d0, d1, d3, uint16_t(d4 - 0x1C));
 }
 
 // 0x1BA04: draws animation d0 of the enemy's sprite set (+0x42) at column d1,
@@ -317,15 +289,12 @@ bool sub_0166A0(uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4)
 // 2 front/back, 4/6/8 directions from the angle between the enemy's heading
 // (+0x2A) and the player. d2 >= 0 is the frame; d2 < 0 steps the walking
 // frames by the distance moved (+0x3C).
-void sub_01BA04(uint32_t a0, uint16_t d0, uint16_t d2, int16_t col, uint16_t scale) {
-    uint32_t a1 = rd32(a0 + 0x42);
-    if (d0 >= rd16(a1)) return;
-    a1 += 2;
-    uint32_t blocks = a1 + uint32_t(int32_t(s16(rd16(a1))));
-    a1 += uint32_t(int32_t(s16(rd16(a1 + 2 + d0 * 2))));
-    uint16_t mode = rd16(a1);
-    int16_t vx = s16(rd16(a0 + 0x2A)), vy = s16(rd16(a0 + 0x2C));
-    int16_t ex = s16(uint16_t(rd16(a0 + 0x20) - player_x)), ey = s16(uint16_t(rd16(a0 + 0x22) - player_y));
+void DrawEnemySprite(Enemy* a0, uint16_t d0, uint16_t d2, int16_t col, uint16_t scale) {
+    const SpriteAnims& anims = sprite_anims(a0->sprites);
+    if (d0 >= anims.size()) return;
+    uint16_t mode = uint16_t(anims[d0].size());
+    int16_t vx = s16(a0->vx), vy = s16(a0->vy);
+    int16_t ex = s16(uint16_t(a0->x - player_x)), ey = s16(uint16_t(a0->y - player_y));
     uint16_t view = 2;
     if (mode != 1) {
         int32_t dot = int32_t(ex) * vx + int32_t(ey) * vy;
@@ -345,57 +314,56 @@ void sub_01BA04(uint32_t a0, uint16_t d0, uint16_t d2, int16_t col, uint16_t sca
             }
         }
     }
-    a1 += uint32_t(int32_t(s16(rd16(a1 + view))));
-    uint16_t frames = rd16(a1);
-    a1 += 2;
+    const std::vector<SpritePart>& parts = anims[d0][view / 2 - 1];
+    uint16_t frames = uint16_t(parts.size() - 1);
     uint16_t part = 0;
     if (s16(d2) >= 0)
         part = d2 <= frames ? d2 : 0;
     else if (frames) {
         uint16_t speed = Distance(vx, vy);
         if (speed >= 4) {
-            wr16(a0 + 0x3C, uint16_t(rd16(a0 + 0x3C) + speed));
-            part = rd8(0x1BBAA + uint16_t((frames - 1) << 5) + ((s16(rd16(a0 + 0x3C)) >> 3) & 0x1F));
+            a0->walk = uint16_t(a0->walk + speed);
+            part = kAnimPart[frames - 1][(s16(a0->walk) >> 3) & 0x1F];
         }
     }
-    U16{0xFF1094} = scale;
-    int16_t d3 = s16(uint16_t(U16{0xFF0E1A} - U16{0xFF116E} - rd16(a0 + 0x24)));
+    st.sprite_scale = scale;
+    int16_t d3 = s16(uint16_t(st.view_z - st.stair_height - a0->z));
     int16_t row = int16_t(uint16_t(((int32_t(s16(scale)) * d3) >> 6) + 0x28));
-    DrawSpriteBlocks(a1 + uint32_t(part) * 0x26, blocks, col, row, scale);
+    DrawSpriteBlocks(parts[part], a0->sprites, col, row, scale);
 }
 
-void h_014454(uint32_t a0) { drop_item(a0, 0x47, false, false); }
-void h_0144FE(uint32_t a0) { drop_item(a0, 0x47, true, false); }
-void h_014A56(uint32_t a0) { drop_item(a0, 0x46, false, true); }
-void h_014B08(uint32_t a0) { drop_item(a0, 0x46, true, false); }
+void DieDropItem47(Enemy* a0) { drop_item(a0, 0x47, false, false); } // 0x14454
+void DieDropItem47Keep(Enemy* a0) { drop_item(a0, 0x47, true, false); } // 0x144FE
+void DieDropItem46Counted(Enemy* a0) { drop_item(a0, 0x46, false, true); } // 0x14A56
+void DieDropItem46Keep(Enemy* a0) { drop_item(a0, 0x46, true, false); } // 0x14B08
 
 namespace {
 
-void enemy_die(uint32_t a0) { CallEnemyHandler(rd32(a0 + 0x16), a0); }
+void enemy_die(Enemy* a0) { RunAct(a0->death, a0); }
 
-uint16_t blink_sum(uint32_t a0) { return uint8_t(U8{0xFF0EB7} + rd8(a0 + 0x3E)); }
+uint16_t blink_sum(Enemy* a0) { return uint8_t(uint8_t(st.frame) + a0->id); }
 
-uint16_t target_distance(uint32_t a0, uint32_t a1) {
-    return Distance(s16(uint16_t(rd16(a0 + 0x20) - rd16(a1 + 0x20))), s16(uint16_t(rd16(a0 + 0x22) - rd16(a1 + 0x22))));
+uint16_t target_distance(Enemy* a0, const Enemy* a1) {
+    return Distance(s16(uint16_t(a0->x - a1->x)), s16(uint16_t(a0->y - a1->y)));
 }
 
 // Keeps a low byte of a position at 0x40 / 0xC0 from the edge of a door cell
 // (0x1615E-0x161A8) and plays the door sound when it moved.
-void door_clamp(uint32_t a0, uint32_t at, uint8_t lo, uint8_t hi) {
-    uint8_t v = rd8(at);
+void door_clamp(Enemy* a0, uint8_t& at, uint8_t lo, uint8_t hi) {
+    uint8_t v = at;
     if (int8_t(v) >= 0) {
         if (v <= lo) return;
-        wr8(at, lo);
+        at = lo;
     } else {
         if (v >= hi) return;
-        wr8(at, hi);
+        at = hi;
     }
-    sub_00D740(a0, 0x36); // 0x1628A
+    EnemySound(a0, 0x36); // 0x1628A
 }
 
 // Door cells push towards their middle line: classes 6/0x83 act on y, 7/0x84 on x.
-void door_cells(uint32_t a0, uint32_t y_byte, uint32_t x_byte, uint8_t lo, uint8_t hi) {
-    uint8_t cls = rd8(cell_class + rd8(enemy_map(a0) + cell_index(rd16(a0 + 0x20), rd16(a0 + 0x22))));
+void door_cells(Enemy* a0, uint8_t& y_byte, uint8_t& x_byte, uint8_t lo, uint8_t hi) {
+    uint8_t cls = st.cell_class[map_cell(enemy_map(a0) + cell_index(a0->x, a0->y))];
     if (cls == 6 || cls == 0x83)
         door_clamp(a0, y_byte, lo, hi);
     else if (cls == 7 || cls == 0x84)
@@ -406,61 +374,57 @@ void door_cells(uint32_t a0, uint32_t y_byte, uint32_t x_byte, uint8_t lo, uint8
 
 // 0x16084: every 8 frames picks the target (0x1642C); without one, or with
 // it 0xA00 away, the enemy dies (+0x16).
-void loc_016084(uint32_t a0) {
+void TrackTarget(Enemy* a0) {
     if (!(blink_sum(a0) & 7)) {
-        uint32_t a1 = sub_01642C(a0);
-        wr32(a0 + 6, a1);
+        Enemy* a1 = FindTarget(a0);
+        set_target(a0, a1);
         if (!a1) return enemy_die(a0);
     }
-    if (target_distance(a0, rd32(a0 + 6)) >= 0xA00) enemy_die(a0);
+    if (target_distance(a0, target_of(a0)) >= 0xA00) enemy_die(a0);
 }
 
-// 0x160C4: every 8 frames picks the target (0x1649C); returns it (a1).
-uint32_t loc_0160C4(uint32_t a0) {
+// 0x160C4: every 8 frames picks the target (0x1649C).
+void TrackVisibleTarget(Enemy* a0) {
     if (!(blink_sum(a0) & 7)) {
-        uint32_t a1 = sub_01649C(a0);
-        wr32(a0 + 6, a1);
-        if (!a1) {
-            enemy_die(a0);
-            return rd32(a0 + 0x16);
-        }
+        Enemy* a1 = FindVisibleTarget(a0);
+        set_target(a0, a1);
+        if (!a1) enemy_die(a0);
     }
-    return rd32(a0 + 6);
 }
 
 // 0x160E8: like 0x16084 every 4 frames with 0x600, then keeps the enemy out
 // of the door frames.
-void loc_0160E8(uint32_t a0) {
+void TrackNearTarget(Enemy* a0) {
     if (!(blink_sum(a0) & 3)) {
-        uint32_t a1 = sub_01642C(a0);
-        wr32(a0 + 6, a1);
+        Enemy* a1 = FindTarget(a0);
+        set_target(a0, a1);
         if (!a1) return enemy_die(a0);
     }
-    if (target_distance(a0, rd32(a0 + 6)) >= 0x600) return enemy_die(a0);
-    door_cells(a0, a0 + 0x23, a0 + 0x21, 0x40, 0xC0);
+    if (target_distance(a0, target_of(a0)) >= 0x600) return enemy_die(a0);
+    door_cells(a0, low_byte(a0->y), low_byte(a0->x), 0x40, 0xC0);
 }
 
 // 0x161B2: like 0x160E8, but checks the door cells every 8 frames and then
 // clamps the bytes at FF8023 / FF8021 (a6-relative in the original, where
-// a0 was probably meant).
-void loc_0161B2(uint32_t a0) {
+// a0 was probably meant): level-0 map cells (13, 26) and (11, 26).
+void TrackNearTargetBadClamp(Enemy* a0) {
     if (!(blink_sum(a0) & 3)) {
-        uint32_t a1 = sub_01642C(a0);
-        wr32(a0 + 6, a1);
+        Enemy* a1 = FindTarget(a0);
+        set_target(a0, a1);
         if (!a1) return enemy_die(a0);
     }
-    if (target_distance(a0, rd32(a0 + 6)) >= 0x600) return enemy_die(a0);
-    if (!(blink_sum(a0) & 7)) door_cells(a0, 0xFF8023, 0xFF8021, 0x20, 0xE0);
+    if (target_distance(a0, target_of(a0)) >= 0x600) return enemy_die(a0);
+    if (!(blink_sum(a0) & 7)) door_cells(a0, st.maps[0][0x34D], st.maps[0][0x34B], 0x20, 0xE0);
 }
 
 // Halves the enemy's velocity (rounding towards zero) and moves it
 // (0x186B8-0x186F2 and its copies).
-void slow_down(uint32_t a0) {
+void slow_down(Enemy* a0) {
     auto half = [](uint16_t v) { return uint16_t(s16(v) < 0 ? -(-s16(v) >> 1) : s16(v) >> 1); };
-    uint16_t vx = half(rd16(a0 + 0x2A)), vy = half(rd16(a0 + 0x2C));
-    wr16(a0 + 0x2A, vx);
-    wr16(a0 + 0x2C, vy);
-    if (vx | vy) sub_0145AA(a0, vx, vy);
+    uint16_t vx = half(a0->vx), vy = half(a0->vy);
+    a0->vx = vx;
+    a0->vy = vy;
+    if (vx | vy) MoveEnemyNarrow(a0, vx, vy);
 }
 
 // Knock-back from a hit (d0 distance, d3/d4 from the enemy to the shooter):
@@ -478,169 +442,146 @@ EnemyMove knock_direction(uint16_t d3, uint16_t d4) {
 }
 
 // Sets the velocity to direction * strength >> 8.
-void set_knock(uint32_t a0, EnemyMove dir, int16_t strength) {
-    wr16(a0 + 0x2A, uint16_t((int32_t(s16(dir.d0)) * strength) >> 8));
-    wr16(a0 + 0x2C, uint16_t((int32_t(s16(dir.d1)) * strength) >> 8));
+void set_knock(Enemy* a0, EnemyMove dir, int16_t strength) {
+    a0->vx = uint16_t((int32_t(s16(dir.d0)) * strength) >> 8);
+    a0->vy = uint16_t((int32_t(s16(dir.d1)) * strength) >> 8);
 }
 
 // 0x1B8D8: the enemy is stunned: handlers 0x1B97A / 0x1B952 / 0x1B9BC /
-// 0x14454 and sprite set 0x1CB96A.
-void loc_01B8D8(uint32_t a0) {
-    wr16(a0 + 4, rd16(a0 + 4) & 0xFF2F);
-    wr32(a0 + 0x12, 0x1B97A);
-    wr8(a0 + 0x1F, 0);
-    wr32(a0 + 0xA, 0x1B9BC);
-    wr32(a0 + 0x16, 0x14454);
-    wr32(a0 + 0xE, 0x1B952);
-    wr16(a0 + 0x2A, 0);
-    wr16(a0 + 0x2C, 0);
-    wr32(a0 + 0x42, 0x1CB96A);
-    wr8(a0 + 0x47, 0x35);
-    sub_057E0C();
-    if (!link_mode) return;
-    wr32(a0 + 0x1A, 0x182DA);
-    wr8(0xFF0FFA, 0x12);
-    wr8(0xFF0FFB, rd8(a0 + 0x3E));
-    wr8(0xFF0FFC, uint8_t(rd8(a0 + 5) | 0x20));
-    wr8(0xFF0FFD, rd8(a0 + 0x32));
-    sub_01C03A(0xFF0FFA);
+// 0x14454 and the stunned sprite set (0x1CB96A).
+void StunEnemy(Enemy* a0) {
+    a0->flags = a0->flags & 0xFF2F;
+    a0->ai = Act::BodyAi;
+    a0->delay = 0;
+    a0->hit = Hit::BodyFlip;
+    a0->death = Act::DieDropItem47;
+    a0->draw = Draw::Stunned;
+    a0->vx = 0;
+    a0->vy = 0;
+    a0->sprites = SpriteSet::Stunned;
+    a0->item_b = 0x35;
+    CountEnemiesLeft();
 }
 
 // 0x1B952
-void h_01B952(uint32_t a0, uint16_t d5, uint16_t d1) {
-    wr32(a0 + 0x42, 0x1CB96A);
+void StunnedDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
+    a0->sprites = SpriteSet::Stunned;
     uint16_t d2 = (blink_sum(a0) >> 2) & 1;
-    if (rd8(a0 + 0x35) & 1) d2 = uint16_t(d2 + 3);
-    sub_01BA04(a0, 0, d2, s16(d1), d5);
+    if (a0->count & 1) d2 = uint16_t(d2 + 3);
+    DrawEnemySprite(a0, 0, d2, s16(d1), d5);
 }
 
 // 0x1B97A
-void h_01B97A(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
+void BodyAi(Enemy* a0) {
+    a0->delay = 0;
     slow_down(a0);
-    loc_0160E8(a0);
+    TrackNearTarget(a0);
 }
 
 // 0x1B9BC (and its copies): pushed away by a hit, flips the frame.
-void h_01B9BC(uint32_t a0, uint16_t d0, uint16_t d3, uint16_t d4) {
-    wr16(a0 + 0x2A, 0);
-    wr16(a0 + 0x2C, 0);
+void BodyHitFlip(Enemy* a0, uint16_t d0, uint16_t d3, uint16_t d4) {
+    a0->vx = 0;
+    a0->vy = 0;
     EnemyMove dir = knock_direction(d3, d4);
     int16_t f = int16_t(0x400 - d0);
     if (f < 0) return;
     set_knock(a0, dir, int16_t(f >> 4));
-    wr8(a0 + 0x35, uint8_t(rd8(a0 + 0x35) + 1));
+    a0->count = uint8_t(a0->count + 1);
 }
 
 // 0x157CA: blood: up to 5 particles for damage d0 >= 0x2F8, flying with
 // (d3, d4) plus noise.
-void sub_0157CA(uint32_t a0, uint16_t d0, uint16_t d3, uint16_t d4) {
+void SpawnBlood(Enemy* a0, uint16_t d0, uint16_t d3, uint16_t d4) {
     int16_t n = int16_t(((s16(uint16_t(d0 - 0x338))) >> 6) + 1);
     if (n < 0 || n > 4) return;
     for (; n >= 0; n--) {
-        if (U16{0xFF0FF6} == 0x10) return;
-        uint32_t e = sub_013466();
+        if (st.blood_count == 0x10) return;
+        Enemy* e = AllocEnemy();
         if (!e) return;
-        U16{0xFF0FF6} = uint16_t(U16{0xFF0FF6} + 1);
-        wr16(e + 0x20, rd16(a0 + 0x20));
-        wr16(e + 0x22, rd16(a0 + 0x22));
-        wr32(e + 0x12, 0x158CC);
-        wr32(e + 0xE, 0x159FE);
-        wr32(e + 0x16, 0x159EE);
-        wr16(e + 0x2A, d3);
-        wr16(e + 0x2C, d4);
+        st.blood_count = uint16_t(st.blood_count + 1);
+        e->x = a0->x;
+        e->y = a0->y;
+        e->ai = Act::BloodAi;
+        e->draw = Draw::Blood;
+        e->death = Act::RemoveBlood;
+        e->vx = d3;
+        e->vy = d4;
         int32_t r = int32_t(Random());
         r >>= 5;
-        wr16(e + 0x2A, uint16_t(rd16(e + 0x2A) + (r & 0x7F) - 0x40));
+        e->vx = uint16_t(e->vx + (r & 0x7F) - 0x40);
         r >>= 7;
-        wr16(e + 0x2C, uint16_t(rd16(e + 0x2C) + (r & 0x7F) - 0x40));
+        e->vy = uint16_t(e->vy + (r & 0x7F) - 0x40);
         r >>= 7;
-        wr16(e + 0x2E, uint16_t((r & 0xF) - 9));
+        e->vz = uint16_t((r & 0xF) - 9);
         r >>= 4;
-        wr16(e + 0x24, uint16_t((r & 0xF) - 8));
-        wr8(e + 0x34, 0);
-        if (link_mode) {
-            wr32(e + 0x1A, 0x16ED8);
-            wr8(0xFF0FFA, 4);
-            wr8(0xFF0FFB, rd8(e + 0x3E));
-            wr16(0xFF0FFC, rd16(e + 0x20));
-            wr16(0xFF0FFE, rd16(e + 0x22));
-            wr8(0xFF1000, rd8(e + 0x25));
-            wr8(0xFF1001, uint8_t(rd8(e + 5) | 0x20));
-            wr8(0xFF1002, rd8(e + 0x32));
-            wr8(0xFF1003, 9);
-            wr16(0xFF1004, rd16(e + 0x2A));
-            wr16(0xFF1006, rd16(e + 0x2C));
-            sub_01C03A(0xFF0FFA);
-        }
+        e->z = uint16_t((r & 0xF) - 8);
+        e->state = 0;
     }
 }
 
 // 0x159EE: removes a blood particle.
-void h_0159EE(uint32_t a0) {
-    if (U16{0xFF0FF6}) U16{0xFF0FF6} = uint16_t(U16{0xFF0FF6} - 1);
-    sub_013554(a0);
+void RemoveBlood(Enemy* a0) {
+    if (st.blood_count) st.blood_count = uint16_t(st.blood_count - 1);
+    RemoveEnemy(a0);
 }
 
 // 0x158CC: blood particle: flies in 16 substeps until it hits a wall (it
 // then sticks, state 1) or falls to the floor (state 2), then fades.
-void h_0158CC(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    if (rd8(a0 + 0x34)) {
-        if (!(blink_sum(a0) & 7) && s16(rd16(a0 + 0x24)) > -0x10) wr16(a0 + 0x24, uint16_t(rd16(a0 + 0x24) - 1));
-        uint16_t sum = uint16_t(rd8(a0 + 0x35) + uint8_t(uint16_t(s16(uint16_t(U16{0xFF0FF6} + 1)) >> 1)));
-        wr8(a0 + 0x35, uint8_t(sum));
-        if (sum > 0xFF) h_0159EE(a0);
+void BloodAi(Enemy* a0) {
+    a0->delay = 0;
+    if (a0->state) {
+        if (!(blink_sum(a0) & 7) && s16(a0->z) > -0x10) a0->z = uint16_t(a0->z - 1);
+        uint16_t sum = uint16_t(a0->count + uint8_t(uint16_t(s16(uint16_t(st.blood_count + 1)) >> 1)));
+        a0->count = uint8_t(sum);
+        if (sum > 0xFF) RemoveBlood(a0);
         return;
     }
-    if (rd16(a0 + 0x2A) | rd16(a0 + 0x2C)) {
-        int32_t x = int32_t(s16(rd16(a0 + 0x20))) << 4, y = int32_t(s16(rd16(a0 + 0x22))) << 4;
-        int32_t vx = s16(rd16(a0 + 0x2A)), vy = s16(rd16(a0 + 0x2C));
+    if (a0->vx | a0->vy) {
+        int32_t x = int32_t(s16(a0->x)) << 4, y = int32_t(s16(a0->y)) << 4;
+        int32_t vx = s16(a0->vx), vy = s16(a0->vy);
         for (int i = 0; i < 16; i++, x += vx, y += vy) {
             uint16_t nx = uint16_t((x + vx) >> 4), ny = uint16_t((y + vy) >> 4);
-            uint8_t hit = sub_013D42(a0, nx, ny);
+            uint8_t hit = EnemyCollisionShape(a0, nx, ny);
             if (!hit) continue;
-            if (hit >= 6 || sub_013CBC(a0, nx, ny)) return h_0159EE(a0);
-            wr32(a0 + 0x1A, 0x16F02);
-            wr16(a0 + 0x20, uint16_t(x >> 4));
-            wr16(a0 + 0x22, uint16_t(y >> 4));
-            wr16(a0 + 0x2E, 0);
-            wr16(a0 + 0x2A, 0);
-            wr16(a0 + 0x2C, 0);
-            wr8(a0 + 0x34, 1);
-            wr8(a0 + 0x35, 0);
+            if (hit >= 6 || EnemyMapShotPasses(a0, nx, ny)) return RemoveBlood(a0);
+            a0->x = uint16_t(x >> 4);
+            a0->y = uint16_t(y >> 4);
+            a0->vz = 0;
+            a0->vx = 0;
+            a0->vy = 0;
+            a0->state = 1;
+            a0->count = 0;
             return;
         }
-        wr16(a0 + 0x20, uint16_t(x >> 4));
-        wr16(a0 + 0x22, uint16_t(y >> 4));
-        wr16(a0 + 0x2A, uint16_t(rd16(a0 + 0x2A) - (s16(rd16(a0 + 0x2A)) >> 2)));
-        wr16(a0 + 0x2C, uint16_t(rd16(a0 + 0x2C) - (s16(rd16(a0 + 0x2C)) >> 2)));
+        a0->x = uint16_t(x >> 4);
+        a0->y = uint16_t(y >> 4);
+        a0->vx = uint16_t(a0->vx - (s16(a0->vx) >> 2));
+        a0->vy = uint16_t(a0->vy - (s16(a0->vy) >> 2));
     }
-    if (rd16(a0 + 0x24) == 0xFFE0) return;
-    uint16_t dz = rd16(a0 + 0x2E);
-    wr16(a0 + 0x24, uint16_t(rd16(a0 + 0x24) + dz));
-    if (s16(rd16(a0 + 0x24)) <= -0x20) {
-        wr16(a0 + 0x24, 0xFFE0);
-        wr16(a0 + 0x2A, 0);
-        wr16(a0 + 0x2C, 0);
-        wr32(a0 + 0x1A, 0x16F2C);
-        wr8(a0 + 0x34, 2);
-        wr8(a0 + 0x35, 0);
+    if (a0->z == 0xFFE0) return;
+    uint16_t dz = a0->vz;
+    a0->z = uint16_t(a0->z + dz);
+    if (s16(a0->z) <= -0x20) {
+        a0->z = 0xFFE0;
+        a0->vx = 0;
+        a0->vy = 0;
+        a0->state = 2;
+        a0->count = 0;
     } else
-        wr16(a0 + 0x2E, uint16_t(dz - 2));
+        a0->vz = uint16_t(dz - 2);
 }
 
 namespace {
 
 // Screen row of the enemy's height for scale d5 (0x15A02-0x15A14 and copies).
-int16_t sprite_row(uint32_t a0, uint16_t d5) {
-    U16{0xFF1094} = d5;
-    int16_t d3 = s16(uint16_t(U16{0xFF0E1A} - U16{0xFF116E} - rd16(a0 + 0x24)));
+int16_t sprite_row(Enemy* a0, uint16_t d5) {
+    st.sprite_scale = d5;
+    int16_t d3 = s16(uint16_t(st.view_z - st.stair_height - a0->z));
     return int16_t(uint16_t(((int32_t(s16(d5)) * d3) >> 6) + 0x28));
 }
 
 // One sprite d5 / 4 high, half as wide, centred on (d1, row).
-void draw_small(uint32_t a1, uint16_t d5, int16_t col, int16_t row) {
+void draw_small(SpriteBlock a1, uint16_t d5, int16_t col, int16_t row) {
     int16_t h = int16_t(s16(d5) >> 2), w = int16_t(h >> 1);
     DrawSprite(h, w, int16_t(col - (w >> 1)), int16_t(row - w), a1);
 }
@@ -648,175 +589,154 @@ void draw_small(uint32_t a1, uint16_t d5, int16_t col, int16_t row) {
 } // namespace
 
 // 0x159FE: blood particle: a drop, a splash on a wall or a pool on the floor.
-void h_0159FE(uint32_t a0, uint16_t d5, uint16_t d1) {
+void BloodDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
     int16_t row = sprite_row(a0, d5);
-    uint16_t d7 = rd8(a0 + 0x35);
-    U16{0xFF1088} = rd8(a0 + 0x3E) & 1;
+    uint16_t d7 = a0->count;
+    st.sprite_mirror = a0->id & 1;
     int16_t col = s16(d1);
-    switch (rd8(a0 + 0x34)) {
-    case 0: return draw_small(0x1163BE, d5, col, row);
+    switch (a0->state) {
+    case 0: return draw_small(object_block(61), d5, col, row);
     case 1: {
         int16_t h = int16_t(int16_t(uint16_t((uint32_t(d5) * uint16_t(d7 + 0x100)) >> 8)) >> 3);
         int16_t w = int16_t(int16_t(uint16_t((uint32_t(d5) * uint16_t(0x100 - d7)) >> 8)) >> 4);
-        return DrawSprite(h, w, int16_t(col - (w >> 1)), row, 0x1165BE);
+        return DrawSprite(h, w, int16_t(col - (w >> 1)), row, object_block(62));
     }
     default: {
         int16_t w = int16_t(int16_t(uint16_t((uint32_t(d5) * uint16_t(d7 + 0x80)) >> 7)) >> 3);
         int16_t h = int16_t(int16_t(uint16_t((uint32_t(d5) * uint16_t(0x100 - d7)) >> 8)) >> 4);
-        return DrawSprite(h, w, int16_t(col - (w >> 1)), int16_t(row - (h >> 1)), 0x1165BE);
+        return DrawSprite(h, w, int16_t(col - (w >> 1)), int16_t(row - (h >> 1)), object_block(62));
     }
     }
 }
 
 // 0x15AC4: bullet spark: rises for 3 frames.
-void h_015AC4(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x34, uint8_t(rd8(a0 + 0x34) - 1));
-    if (int8_t(rd8(a0 + 0x34)) < 0) return sub_013554(a0);
-    wr16(a0 + 0x24, uint16_t(rd16(a0 + 0x24) + 2));
+void SparkAi(Enemy* a0) {
+    a0->delay = 0;
+    a0->state = uint8_t(a0->state - 1);
+    if (int8_t(a0->state) < 0) return RemoveEnemy(a0);
+    a0->z = uint16_t(a0->z + 2);
 }
 
 // 0x15AD6: bullet spark frames (0x1167BE).
-void h_015AD6(uint32_t a0, uint16_t d5, uint16_t d1) {
+void SparkDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
     int16_t row = sprite_row(a0, d5);
-    uint32_t a1 = 0x1167BE;
-    uint8_t f = uint8_t(2 - rd8(a0 + 0x34));
-    if (f) a1 += uint32_t(int32_t(int16_t(uint16_t(f << 9))));
-    U16{0xFF1088} = 0;
+    SpriteBlock a1 = object_block(63);
+    uint8_t f = uint8_t(2 - a0->state);
+    if (f) a1.index = uint8_t(a1.index + (int16_t(uint16_t(f << 9)) >> 9));
+    st.sprite_mirror = 0;
     draw_small(a1, d5, s16(d1), row);
 }
 
 // 0x16040: a small blinking sprite (0x10EBBE).
-void h_016040(uint32_t a0, uint16_t d5, uint16_t d1) {
+void EnemyShotDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
     int16_t row = sprite_row(a0, d5);
-    U16{0xFF1088} = blink_sum(a0) & 1;
-    draw_small(0x10EBBE, d5, s16(d1), row);
+    st.sprite_mirror = blink_sum(a0) & 1;
+    draw_small(object_block(1), d5, s16(d1), row);
 }
 
 // ---- Objects the weapons create (0x13AD2-0x1444A).
 
 namespace {
 
-void link_state(uint32_t a0, uint32_t handler) {
-    if (!link_mode) return;
-    wr32(a0 + 0x1A, handler);
-    wr8(0xFF0FFA, 0x12);
-    wr8(0xFF0FFB, rd8(a0 + 0x3E));
-    wr8(0xFF0FFC, uint8_t(rd8(a0 + 5) | 0x20));
-    wr8(0xFF0FFD, rd8(a0 + 0x32));
-    sub_01C03A(0xFF0FFA);
-}
-
-void link_remove(uint32_t a0) {
-    if (link_mode) {
-        wr8(0xFF0FFA, 5);
-        wr8(0xFF0FFB, rd8(a0 + 0x3E));
-        sub_01C03A(0xFF0FFA);
-    }
-    sub_013526(a0);
-}
-
-void explosion_sound(uint32_t a0, uint16_t id, uint16_t time) {
-    U16{0xFF2716} = 0;
-    U16{0xFF2718} = 0;
-    sub_00D740(a0, id);
-    U16{0xFF2718} = time;
+void explosion_sound(Enemy* a0, uint16_t id, uint16_t time) {
+    st.speech_on = 0;
+    st.dac_hold = 0;
+    EnemySound(a0, id);
+    st.dac_hold = time;
 }
 
 // 0x13DE8: turns the object into an explosion (0x14196 / 0x141E2).
-void become_explosion(uint32_t a0) {
-    wr32(a0 + 0xE, 0x141E2);
-    wr32(a0 + 0x12, 0x14196);
-    wr32(a0 + 0xA, 0x13298);
-    wr16(a0 + 4, rd16(a0 + 4) & 0xFF37);
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x1E, 0);
-    link_state(a0, 0x16E34);
+void become_explosion(Enemy* a0) {
+    a0->draw = Draw::Explosion;
+    a0->ai = Act::ExplosionAi;
+    a0->hit = Hit::None;
+    a0->flags = a0->flags & 0xFF37;
+    a0->delay = 0;
+    a0->step = 0;
 }
 
 // 0x13DCC
-void explode(uint32_t a0) {
+void explode(Enemy* a0) {
     explosion_sound(a0, 0x8A, 0x1E);
     become_explosion(a0);
 }
 
 // 0x13E42 / 0x13EC0: explodes on the player at once (the flags are or-ed
 // with 0xFF37 where the other paths and them).
-void explode_on_player(uint32_t a0, uint16_t sound, bool shielded) {
+void explode_on_player(Enemy* a0, uint16_t sound, bool shielded) {
     explosion_sound(a0, sound, 0x1E);
-    uint16_t px = U16{0xFF0DF0}, py = U16{0xFF0DF2};
-    uint16_t dx = uint16_t(rd16(a0 + 0x20) - player_x), dy = uint16_t(rd16(a0 + 0x22) - player_y);
+    uint16_t px = st.push_x, py = st.push_y;
+    uint16_t dx = uint16_t(a0->x - player_x), dy = uint16_t(a0->y - player_y);
     uint16_t d = Distance(s16(dx), s16(dy));
     if (shielded)
-        sub_00D7DC(d, dx, dy);
+        HitPlayerIgnoreArmour(d, dx, dy);
     else
-        sub_00D800(d, dx, dy);
-    U16{0xFF0DF2} = py;
-    U16{0xFF0DF0} = px;
-    wr32(a0 + 0xE, 0x141E2);
-    wr32(a0 + 0x12, 0x14196);
-    wr32(a0 + 0x1A, 0x16E34);
-    wr16(a0 + 4, rd16(a0 + 4) | 0xFF37);
-    wr32(a0 + 0xA, 0x13298);
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x1E, 2);
+        HitPlayer(d, dx, dy);
+    st.push_y = py;
+    st.push_x = px;
+    a0->draw = Draw::Explosion;
+    a0->ai = Act::ExplosionAi;
+    a0->flags = a0->flags | 0xFF37;
+    a0->hit = Hit::None;
+    a0->delay = 0;
+    a0->step = 2;
 }
 
 // Halves a velocity word, rounding towards zero.
 uint16_t half(uint16_t v) { return uint16_t(s16(v) < 0 ? -(-s16(v) >> 1) : s16(v) >> 1); }
 
 // neg.w then asr.w on memory: reverses and halves a velocity.
-void bounce(uint32_t at) { wr16(at, uint16_t(s16(uint16_t(-rd16(at))) >> 1)); }
+void bounce(uint16_t& v) { v = uint16_t(s16(uint16_t(-v)) >> 1); }
 
 // Projectile sprites centred on column d1 at the object's height; the
 // width is height >> wshift, the row moves up by height >> rshift.
-void draw_shot(uint32_t a0, uint16_t d5, uint16_t d1, uint32_t a1, int16_t h, int wshift, int rshift) {
+void draw_shot(Enemy* a0, uint16_t d5, uint16_t d1, SpriteBlock a1, int16_t h, int wshift, int rshift) {
     int16_t row = sprite_row(a0, d5);
     int16_t w = int16_t(h >> wshift);
     DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), int16_t(row - (h >> rshift)), a1);
 }
 
-// 0x9F8E table index of the enemy start cell classes -> template (0xA09A).
+// 0x9F8E table: enemy type of the start cell classes, 1-10 (templates by
+// type at 0xA09A).
 // 0xA08E: spawns the enemy of start cell a1 (on the level in cur_level).
-void sub_00A08E(uint16_t d3, uint32_t a1) {
-    uint32_t t = rd32(0xA09A + (d3 - 1) * 4);
-    U32{0xFF26F2} = t;
-    if (a1 < 0xFF7CD6 || a1 >= 0xFFBCD6) a1 = 0xFFCCD6;
-    wr8(a1, 0);
-    sub_01C9A0(a1);
-    uint32_t e = sub_013466();
+void SpawnEnemy(uint16_t d3, Cell a1) {
+    const EnemyTemplate& t = kEnemyTemplates[d3 - 1];
+    st.spawn_template = uint8_t(d3 - 1);
+    a1 = on_map(a1);
+    put_cell(a1, 0);
+    Enemy* e = AllocEnemy();
     if (!e) return;
-    wr8(e + 0x1F, 0);
-    wr32(e + 0x12, rd32(t));
-    wr32(e + 0xE, rd32(t + 4));
-    wr32(e + 0xA, rd32(t + 8));
-    wr32(e + 0x16, rd32(t + 0xC));
-    wr16(e + 4, uint16_t(rd16(e + 4) | rd16(t + 0x10)));
-    wr16(e + 0x36, rd16(t + 0x12));
-    wr8(e + 0x32, U8{0xFF1029});
+    e->delay = 0;
+    e->ai = t.ai;
+    e->draw = t.draw;
+    e->hit = t.hit;
+    e->death = t.death;
+    e->flags = uint16_t(e->flags | t.flags);
+    e->health = t.health;
+    e->level = uint8_t(st.cur_level);
     uint16_t idx = uint16_t(a1 - enemy_map(e)) & 0x3FF;
-    wr16(e + 0x20, uint16_t(((idx & 0x1F) << 8) + 0x80));
-    wr16(e + 0x22, uint16_t(((idx << 3) & 0xFF00) | 0x80));
-    wr16(e + 0x24, rd16(t + 0x1A));
-    wr8(e + 0x34, 0);
-    wr8(e + 0x35, 0x14);
-    wr8(e + 0x41, 0);
-    wr16(e + 0x38, player_x);
-    wr16(e + 0x3A, player_y);
-    wr32(e + 0x42, rd32(t + 0x14));
-    if (cur_level && rd32(e + 0x42) == 0x16EC58 && ((rd16(e + 0x20) ^ rd16(e + 0x22)) & 0x100)) wr32(e + 0x42, 0x1C258A);
-    wr8(e + 0x46, rd8(t + 0x18));
-    wr8(e + 0x47, rd8(t + 0x19));
-    wr32(e + 6, player_struct);
-    sub_00D760(rd16(t + 0x24));
+    e->x = uint16_t(((idx & 0x1F) << 8) + 0x80);
+    e->y = uint16_t(((idx << 3) & 0xFF00) | 0x80);
+    e->z = t.z;
+    e->state = 0;
+    e->count = 0x14;
+    e->timer = 0;
+    e->dest_x = player_x;
+    e->dest_y = player_y;
+    e->sprites = t.sprites;
+    if (cur_level && e->sprites == SpriteSet::Type1 && ((e->x ^ e->y) & 0x100)) e->sprites = SpriteSet::Type1Alt;
+    e->item_a = t.item_a;
+    e->item_b = t.item_b;
+    set_target(e, player_struct);
+    PlaySoundLocal(t.sound);
 }
 
 // 0x9E1E: spawns the enemies of the start cells in the 7x7 cells around
 // cell a0, skipping rows and columns outside the map as seen from the
 // player's position.
-void sub_009E1E(uint32_t a0) {
+void SpawnEnemiesAround(Cell a0) {
     int16_t row = int16_t((s16(player_y) >> 8) - 4);
-    uint32_t a1 = a0 - 0x63;
+    Cell a1 = a0 - 0x63;
     for (int i = 0; i < 7; i++) {
         row++;
         if (row >= 0) {
@@ -825,8 +745,8 @@ void sub_009E1E(uint32_t a0) {
             for (int j = 0; j < 7; j++, a1++) {
                 col++;
                 if (col < 0 || col >= 0x20) continue;
-                uint8_t n = rd8(0x9F8E + rd8(cell_class + rd8(a1)));
-                if (n) sub_00A08E(n, a1);
+                uint8_t n = kSpawnType[st.cell_class[map_cell(a1)]];
+                if (n) SpawnEnemy(n, a1);
             }
             a1 -= 7;
         }
@@ -837,312 +757,306 @@ void sub_009E1E(uint32_t a0) {
 // 0x16294: an explosion at (d0, d1) on the level of a0: wakes the enemy
 // start cells around it, then hits every enemy and the player within 0x400
 // in sight (FF26F0 set within 0x80).
-void loc_016294(uint32_t a0, uint16_t d0, uint16_t d1) {
-    uint8_t level = rd8(a0 + 0x32);
+void BlastAt(Enemy* a0, uint16_t d0, uint16_t d1) {
+    uint8_t level = a0->level;
     uint16_t saved = cur_level;
     cur_level = level;
-    sub_009E1E(enemy_map(a0) + cell_index(d0, d1));
+    SpawnEnemiesAround(enemy_map(a0) + cell_index(d0, d1));
     cur_level = saved;
-    uint16_t n = enemy_count;
-    for (uint32_t e = n ? uint32_t(enemy_list) : 0; n; n--) {
-        uint32_t next = rd32(e);
-        if (rd8(e + 0x32) == level && !sub_0166E8(e, d0, d1, rd16(e + 0x20), rd16(e + 0x22))) {
-            uint16_t dx = uint16_t(d0 - rd16(e + 0x20)), dy = uint16_t(d1 - rd16(e + 0x22));
+    uint16_t n = st.object_count;
+    for (Enemy* e = n ? first_object() : nullptr; n; n--) {
+        Enemy* next = next_object(e);
+        if (e->level == level && !EnemyLineBlocked(e, d0, d1, e->x, e->y)) {
+            uint16_t dx = uint16_t(d0 - e->x), dy = uint16_t(d1 - e->y);
             uint16_t d = Distance(s16(dx), s16(dy));
             if (d < 0x400) {
-                if (d <= 0x80) U8{0xFF26F0} = 1;
-                CallEnemyHit(rd32(e + 0xA), e, d, dx, dy);
-                U8{0xFF26F0} = 0;
+                if (d <= 0x80) st.blast_near = 1;
+                HitObject(e, d, dx, dy);
+                st.blast_near = 0;
             }
         }
         e = next;
     }
-    if (level != U8{0xFF1029}) return;
-    if (sub_0165D8(a0, d0, d1, player_x, player_y)) return;
+    if (level != uint8_t(st.cur_level)) return;
+    if (LineBlocked(a0, d0, d1, player_x, player_y)) return;
     uint16_t dx = uint16_t(d0 - player_x), dy = uint16_t(d1 - player_y);
     uint16_t d = Distance(s16(dx), s16(dy));
-    if (U16{0xFF1030} == 1) d = uint16_t(d << 1);
-    if (d < 0x400) sub_00D800(d, dx, dy);
+    if (st.character == 1) d = uint16_t(d << 1);
+    if (d < 0x400) HitPlayer(d, dx, dy);
 }
 
 } // namespace
 
 // 0xA6BC: a blast at (d0, d1) breaks the breakable cell there (classes
-// 0x79, 0x7B, 0x7D, 0x7F) into the cell byte FF6340 + 2n.
-void sub_00A6BC(uint16_t d0, uint16_t d1) {
-    uint32_t a0 = cur_map_ptr + cell_index(d0, d1);
-    uint8_t cls = rd8(cell_class + rd8(a0));
+// 0x79, 0x7B, 0x7D, 0x7F) into the first cell of class + 1.
+void BlastBreakCell(uint16_t d0, uint16_t d1) {
+    Cell a0 = cur_map + cell_index(d0, d1);
+    uint8_t cls = st.cell_class[map_cell(a0)];
     if (cls != 0x79 && cls != 0x7B && cls != 0x7D && cls != 0x7F) return;
-    if (a0 < 0xFF7CD6 || a0 >= 0xFFBCD6) a0 = 0xFFCCD6;
-    wr8(a0, rd8(0xFF6340 + (cls - 0x79)));
-    sub_01C9A0(a0);
-    U16{0xFF2716} = 0;
-    U16{0xFF2718} = 0;
-    sub_00D760(0x3B);
-    U16{0xFF2718} = 0x14;
+    put_cell(a0, st.class_cell[cls + 1]);
+    st.speech_on = 0;
+    st.dac_hold = 0;
+    PlaySoundLocal(0x3B);
+    st.dac_hold = 0x14;
 }
 
 // 0x13AD2: a thrown bomb explodes when hit nearer than 0x200.
-void h_013AD2(uint32_t a0, uint16_t d0) {
+void BombHit(Enemy* a0, uint16_t d0) {
     if (d0 < 0x200) explode(a0);
 }
 
 // 0x13ADC: thrown bomb: bounces off walls and the floor, then explodes,
 // breaking the cells around it.
-void h_013ADC(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    if (rd16(a0 + 0x2A) | rd16(a0 + 0x2C)) {
-        uint16_t x = rd16(a0 + 0x20), y = rd16(a0 + 0x22);
-        uint16_t nx = uint16_t(x + rd16(a0 + 0x2A)), ny = uint16_t(y + rd16(a0 + 0x2C));
-        if (sub_013D42(a0, nx, ny)) {
-            if (sub_013CBC(a0, nx, ny)) return sub_013554(a0);
-            sub_00D740(a0, 0x6C);
-            bool xwall = sub_013D42(a0, uint16_t(rd16(a0 + 0x20) + rd16(a0 + 0x2A)), rd16(a0 + 0x22));
-            bool ywall = sub_013D42(a0, rd16(a0 + 0x20), uint16_t(rd16(a0 + 0x22) + rd16(a0 + 0x2C)));
+void BombAi(Enemy* a0) {
+    a0->delay = 0;
+    if (a0->vx | a0->vy) {
+        uint16_t x = a0->x, y = a0->y;
+        uint16_t nx = uint16_t(x + a0->vx), ny = uint16_t(y + a0->vy);
+        if (EnemyCollisionShape(a0, nx, ny)) {
+            if (EnemyMapShotPasses(a0, nx, ny)) return RemoveEnemy(a0);
+            EnemySound(a0, 0x6C);
+            bool xwall = EnemyCollisionShape(a0, uint16_t(a0->x + a0->vx), a0->y);
+            bool ywall = EnemyCollisionShape(a0, a0->x, uint16_t(a0->y + a0->vy));
             if (xwall == ywall) {
-                bounce(a0 + 0x2C);
-                bounce(a0 + 0x2A);
+                bounce(a0->vy);
+                bounce(a0->vx);
             } else if (xwall)
-                bounce(a0 + 0x2A);
+                bounce(a0->vx);
             else
-                bounce(a0 + 0x2C);
+                bounce(a0->vy);
         }
-        wr16(a0 + 0x20, uint16_t(rd16(a0 + 0x20) + rd16(a0 + 0x2A)));
-        wr16(a0 + 0x22, uint16_t(rd16(a0 + 0x22) + rd16(a0 + 0x2C)));
+        a0->x = uint16_t(a0->x + a0->vx);
+        a0->y = uint16_t(a0->y + a0->vy);
     }
-    uint16_t vz = rd16(a0 + 0x2E);
-    wr16(a0 + 0x24, uint16_t(rd16(a0 + 0x24) + vz));
-    if (s16(rd16(a0 + 0x24)) > -0x18)
-        wr16(a0 + 0x2E, uint16_t(vz - 3));
+    uint16_t vz = a0->vz;
+    a0->z = uint16_t(a0->z + vz);
+    if (s16(a0->z) > -0x18)
+        a0->vz = uint16_t(vz - 3);
     else {
-        wr16(a0 + 0x24, 0xFFE8);
+        a0->z = 0xFFE8;
         if (vz) {
             vz = uint16_t(s16(uint16_t(-(vz - 3))) >> 2);
             if (vz < 3) vz = 0;
-            wr16(a0 + 0x2E, vz);
-            sub_00D740(a0, 0x6C);
+            a0->vz = vz;
+            EnemySound(a0, 0x6C);
         }
-        if (rd16(a0 + 0x24) == 0xFFE8) {
-            wr16(a0 + 0x2A, half(rd16(a0 + 0x2A)));
-            wr16(a0 + 0x2C, half(rd16(a0 + 0x2C)));
+        if (a0->z == 0xFFE8) {
+            a0->vx = half(a0->vx);
+            a0->vy = half(a0->vy);
         }
     }
-    wr8(a0 + 0x34, uint8_t(rd8(a0 + 0x34) - 1));
-    if (rd8(a0 + 0x34)) return;
+    a0->state = uint8_t(a0->state - 1);
+    if (a0->state) return;
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++)
-            sub_00A6BC(uint16_t(rd16(a0 + 0x20) - 0x100 + i * 0x100), uint16_t(rd16(a0 + 0x22) - 0x100 + j * 0x100));
+            BlastBreakCell(uint16_t(a0->x - 0x100 + i * 0x100), uint16_t(a0->y - 0x100 + j * 0x100));
     explode(a0);
 }
 
-void h_013E42(uint32_t a0) { explode_on_player(a0, 0x8A, false); }
-void h_013EC0(uint32_t a0) { explode_on_player(a0, 0x6D, true); }
+void ExplodeOnPlayer(Enemy* a0) { explode_on_player(a0, 0x8A, false); } // 0x13E42
+void ExplodeOnPlayerShielded(Enemy* a0) { explode_on_player(a0, 0x6D, true); } // 0x13EC0
 
 // 0x13F3E: thrown bomb sprite.
-void h_013F3E(uint32_t a0, uint16_t d5, uint16_t d1) {
-    U16{0xFF1088} = 0;
-    draw_shot(a0, d5, d1, 0x1109BE, int16_t(s16(d5) >> 2), 1, 1);
+void BombDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
+    st.sprite_mirror = 0;
+    draw_shot(a0, d5, d1, object_block(16), int16_t(s16(d5) >> 2), 1, 1);
 }
 
 // 0x13F7C: mine: every 20 frames picks the nearest enemy with flag 0x10 (or
 // the player), and explodes when it comes within 0x100.
-void h_013F7C(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x1E, uint8_t(rd8(a0 + 0x1E) - 1));
-    if (int8_t(rd8(a0 + 0x1E)) < 0) {
-        wr8(a0 + 0x1E, 0x14);
-        uint32_t a1 = sub_016388(a0, 0x10);
-        wr32(a0 + 6, a1);
-        if (int32_t(a1) < 0) return sub_013554(a0);
+void MineAi(Enemy* a0) {
+    a0->delay = 0;
+    a0->step = uint8_t(a0->step - 1);
+    if (int8_t(a0->step) < 0) {
+        a0->step = 0x14;
+        a0->target = NearestEnemy(a0, 0x10);
+        if (a0->target == kNoTarget) return RemoveEnemy(a0);
     }
-    uint32_t a1 = rd32(a0 + 6);
-    if (a1 == 0xFFFFFFFF) return;
+    if (a0->target == kNoTarget) return;
+    Enemy* a1 = target_of(a0);
     uint16_t tx, ty;
-    if (a1 == 0 || a1 == player_struct) {
-        if (U16{0xFF1030} == 1) return;
-        tx = a1 ? rd16(a1 + 0x20) : uint16_t(player_x);
-        ty = a1 ? rd16(a1 + 0x22) : uint16_t(player_y);
+    if (a0->target == kPlayerPos || a1 == player_struct) {
+        if (st.character == 1) return;
+        tx = a0->target == kPlayerTarget ? a1->x : uint16_t(player_x);
+        ty = a0->target == kPlayerTarget ? a1->y : uint16_t(player_y);
     } else {
-        if (!(rd16(a0 + 4) & 1)) return sub_013554(a0);
-        tx = rd16(a1 + 0x20);
-        ty = rd16(a1 + 0x22);
+        if (!(a0->flags & 1)) return RemoveEnemy(a0);
+        tx = a1->x;
+        ty = a1->y;
     }
-    if (Distance(s16(uint16_t(rd16(a0 + 0x20) - tx)), s16(uint16_t(rd16(a0 + 0x22) - ty))) < 0x100) explode(a0);
+    if (Distance(s16(uint16_t(a0->x - tx)), s16(uint16_t(a0->y - ty))) < 0x100) explode(a0);
 }
 
 // 0x1402E: mine sprite, blinking.
-void h_01402E(uint32_t a0, uint16_t d5, uint16_t d1) {
-    U16{0xFF1088} = 0;
-    uint32_t a1 = (U8{0xFF0EB7} & 2) ? 0x10FBBE : 0x10F9BE;
+void MineDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
+    st.sprite_mirror = 0;
+    SpriteBlock a1 = (uint8_t(st.frame) & 2) ? object_block(9) : object_block(8);
     draw_shot(a0, d5, d1, a1, int16_t(s16(d5) >> 2), 0, 0);
 }
 
 // 0x14076: grenade: flies until it hits a wall or its time runs out, then
 // explodes (an open sky cell takes it as a lightning bolt instead).
-void h_014076(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x34, uint8_t(rd8(a0 + 0x34) - 1));
-    uint16_t nx = uint16_t(rd16(a0 + 0x20) + rd16(a0 + 0x2A)), ny = uint16_t(rd16(a0 + 0x22) + rd16(a0 + 0x2C));
-    if (rd8(a0 + 0x34) && !sub_013D42(a0, nx, ny)) {
-        wr16(a0 + 0x20, nx);
-        wr16(a0 + 0x22, ny);
+void GrenadeAi(Enemy* a0) {
+    a0->delay = 0;
+    a0->state = uint8_t(a0->state - 1);
+    uint16_t nx = uint16_t(a0->x + a0->vx), ny = uint16_t(a0->y + a0->vy);
+    if (a0->state && !EnemyCollisionShape(a0, nx, ny)) {
+        a0->x = nx;
+        a0->y = ny;
         return;
     }
     if (nx >= 0x1F00) {
-        uint8_t cls = rd8(cell_class + rd8(enemy_map(a0) + cell_index(rd16(a0 + 0x20), rd16(a0 + 0x22))));
-        if (cls == 0x28 || (cls == 0x27 && s16(rd16(a0 + 0x24)) > 0)) {
-            sub_0028B4(0x120);
-            return sub_013554(a0);
+        uint8_t cls = st.cell_class[map_cell(enemy_map(a0) + cell_index(a0->x, a0->y))];
+        if (cls == 0x28 || (cls == 0x27 && s16(a0->z) > 0)) {
+            StartBolt(0x120);
+            return RemoveEnemy(a0);
         }
     }
-    if (sub_013CBC(a0, nx, ny)) return sub_013554(a0);
-    sub_00A6BC(nx, ny);
-    wr16(a0 + 0x2A, 0);
-    wr16(a0 + 0x2C, 0);
+    if (EnemyMapShotPasses(a0, nx, ny)) return RemoveEnemy(a0);
+    BlastBreakCell(nx, ny);
+    a0->vx = 0;
+    a0->vy = 0;
     explosion_sound(a0, 0x18, 0x32);
     become_explosion(a0);
 }
 
 // 0x14150: grenade and fire ball sprite.
-void h_014150(uint32_t a0, uint16_t d5, uint16_t d1) {
-    U16{0xFF1088} = U16{0xFF0EB6} & 1;
-    draw_shot(a0, d5, d1, 0x10EBBE, int16_t(s16(d5) >> 1), 1, 1);
+void GrenadeDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
+    st.sprite_mirror = st.frame & 1;
+    draw_shot(a0, d5, d1, object_block(1), int16_t(s16(d5) >> 1), 1, 1);
 }
 
 // 0x14196: explosion: hits what is around at step 2, ends at step 6.
-void h_014196(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x1E, uint8_t(rd8(a0 + 0x1E) + 1));
-    if (rd8(a0 + 0x1E) == 6) return link_remove(a0);
-    if (rd8(a0 + 0x1E) == 2) loc_016294(a0, rd16(a0 + 0x20), rd16(a0 + 0x22));
+void ExplosionAi(Enemy* a0) {
+    a0->delay = 0;
+    a0->step = uint8_t(a0->step + 1);
+    if (a0->step == 6) return UnlinkEnemy(a0);
+    if (a0->step == 2) BlastAt(a0, a0->x, a0->y);
 }
 
 // 0x141E2: explosion sprite, sized by step (table 0x14234).
-void h_0141E2(uint32_t a0, uint16_t d5, uint16_t d1) {
-    U16{0xFF1088} = U16{0xFF0EB6} & 1;
-    uint8_t shift = rd8(0x14234 + rd8(a0 + 0x1E));
-    draw_shot(a0, d5, d1, 0x10EBBE, int16_t(s16(uint16_t(d5 + d5)) >> shift), 1, 1);
+void ExplosionDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
+    st.sprite_mirror = st.frame & 1;
+    uint8_t shift = kShotShift[a0->step];
+    draw_shot(a0, d5, d1, object_block(1), int16_t(s16(uint16_t(d5 + d5)) >> shift), 1, 1);
 }
 
 // 0x1423A: fire on the floor, burns for 16 frames.
-void h_01423A(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x1E, uint8_t(rd8(a0 + 0x1E) + 1));
-    if (rd8(a0 + 0x1E) == 0x10) link_remove(a0);
+void FireAi(Enemy* a0) {
+    a0->delay = 0;
+    a0->step = uint8_t(a0->step + 1);
+    if (a0->step == 0x10) UnlinkEnemy(a0);
 }
 
 // 0x14272: the fire shrinks as it burns down.
-void h_014272(uint32_t a0, uint16_t d5, uint16_t d1) {
-    U16{0xFF1094} = d5;
-    int16_t d3 = s16(uint16_t(U16{0xFF0E1A} - U16{0xFF116E} + 0x20));
+void FireDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
+    st.sprite_scale = d5;
+    int16_t d3 = s16(uint16_t(st.view_z - st.stair_height + 0x20));
     int16_t row = int16_t(uint16_t(((int32_t(s16(d5)) * d3) >> 6) + 0x28));
-    U16{0xFF1088} = U16{0xFF0EB6} & 1;
-    int16_t h = int16_t(uint16_t((int32_t(s16(d5)) * int16_t(0x10 - rd8(a0 + 0x1E))) >> 4));
+    st.sprite_mirror = st.frame & 1;
+    int16_t h = int16_t(uint16_t((int32_t(s16(d5)) * int16_t(0x10 - a0->step)) >> 4));
     int16_t w = int16_t(h >> 1);
-    DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), int16_t(row - h), 0x10E9BE);
+    DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), int16_t(row - h), object_block(0));
 }
 
 // 0x142C6: fire ball: arcs until it lands, hits a wall or its time runs out,
 // then sets fire to what is within 0x100 (the player within 0x30).
-void h_0142C6(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x34, uint8_t(rd8(a0 + 0x34) - 1));
-    if (rd8(a0 + 0x34)) {
-        wr16(a0 + 0x24, uint16_t(rd16(a0 + 0x24) - rd16(a0 + 0x2E)));
-        wr16(a0 + 0x2E, uint16_t(rd16(a0 + 0x2E) + 1));
-        if (s16(rd16(a0 + 0x24)) >= -0x1C) {
-            uint16_t nx = uint16_t(rd16(a0 + 0x20) + rd16(a0 + 0x2A)), ny = uint16_t(rd16(a0 + 0x22) + rd16(a0 + 0x2C));
-            if (!sub_013D42(a0, nx, ny)) {
-                wr16(a0 + 0x20, nx);
-                wr16(a0 + 0x22, ny);
+void FireBallAi(Enemy* a0) {
+    a0->delay = 0;
+    a0->state = uint8_t(a0->state - 1);
+    if (a0->state) {
+        a0->z = uint16_t(a0->z - a0->vz);
+        a0->vz = uint16_t(a0->vz + 1);
+        if (s16(a0->z) >= -0x1C) {
+            uint16_t nx = uint16_t(a0->x + a0->vx), ny = uint16_t(a0->y + a0->vy);
+            if (!EnemyCollisionShape(a0, nx, ny)) {
+                a0->x = nx;
+                a0->y = ny;
                 return;
             }
         }
     }
-    U8{0xFF26F0} = 1;
-    U8{0xFF26F1} = 1;
-    uint16_t d0 = rd16(a0 + 0x20), d1 = rd16(a0 + 0x22);
-    uint8_t level = rd8(a0 + 0x32);
-    // The sound below reads the level of a0 as the loop left it.
-    uint32_t last = a0;
-    uint16_t n = enemy_count;
+    st.blast_near = 1;
+    st.burning = 1;
+    uint16_t d0 = a0->x, d1 = a0->y;
+    uint8_t level = a0->level;
+    uint16_t n = st.object_count;
     if (n) {
-        uint32_t e = enemy_list;
+        Enemy* e = first_object();
         for (; n; n--) {
-            uint32_t next = rd32(e);
-            if ((rd16(e + 4) & 0xC8) && rd8(e + 0x32) == level && !sub_0166E8(e, d0, d1, rd16(e + 0x20), rd16(e + 0x22))) {
-                uint16_t dx = uint16_t(d0 - rd16(e + 0x20)), dy = uint16_t(d1 - rd16(e + 0x22));
+            Enemy* next = next_object(e);
+            if ((e->flags & 0xC8) && e->level == level && !EnemyLineBlocked(e, d0, d1, e->x, e->y)) {
+                uint16_t dx = uint16_t(d0 - e->x), dy = uint16_t(d1 - e->y);
                 uint16_t d = Distance(s16(dx), s16(dy));
                 if (d < 0x100) {
-                    uint16_t blood = U16{0xFF0FF6};
-                    U16{0xFF0FF6} = 0x10;
-                    CallEnemyHit(rd32(e + 0xA), e, d, dx, dy);
-                    U16{0xFF0FF6} = blood;
-                    wr16(e + 0x2A, 0);
-                    wr16(e + 0x2C, 0);
+                    uint16_t blood = st.blood_count;
+                    st.blood_count = 0x10;
+                    HitObject(e, d, dx, dy);
+                    st.blood_count = blood;
+                    e->vx = 0;
+                    e->vy = 0;
                 }
             }
             e = next;
         }
-        last = e;
     }
-    if (cur_level == level && !sub_0165D8(last, d0, d1, player_x, player_y)) {
+    if (cur_level == level && !LineBlocked(a0, d0, d1, player_x, player_y)) {
         uint16_t dx = uint16_t(d0 - player_x), dy = uint16_t(d1 - player_y);
         uint16_t d = Distance(s16(dx), s16(dy));
-        if (d < 0x30) sub_00D7DC(d, dx, dy);
+        if (d < 0x30) HitPlayerIgnoreArmour(d, dx, dy);
     }
-    U8{0xFF26F0} = 0;
-    U8{0xFF26F1} = 0;
-    sub_00D740(last, 0x6D);
-    wr8(a0 + 0x1F, 0);
-    wr8(a0 + 0x1E, 0);
-    wr32(a0 + 0x12, 0x1423A);
-    wr32(a0 + 0xE, 0x14272);
-    wr16(a0 + 0x24, 0xFFE0);
-    wr16(a0 + 4, rd16(a0 + 4) & 0xFF37);
-    link_state(a0, 0x16E88);
+    st.blast_near = 0;
+    st.burning = 0;
+    // The original's sound 0x6D here never plays: it takes the level of the
+    // object the loop ends on, address 0 (ROM byte 0x10, no level).
+    a0->delay = 0;
+    a0->step = 0;
+    a0->ai = Act::FireAi;
+    a0->draw = Draw::Fire;
+    a0->z = 0xFFE0;
+    a0->flags = a0->flags & 0xFF37;
 }
 
 // 0x15F38: makes a0 a 0x15F6E shot at (d0, d1) with velocity (d3, d4),
 // height d5 and vertical speed d6.
-void sub_015F38(uint32_t a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4, uint16_t d5, uint16_t d6) {
-    wr16(a0 + 0x20, d0);
-    wr16(a0 + 0x22, d1);
-    wr16(a0 + 0x2A, d3);
-    wr16(a0 + 0x2C, d4);
-    wr16(a0 + 0x24, d5);
-    wr16(a0 + 0x2E, d6);
-    wr8(a0 + 0x1F, 0);
-    wr32(a0 + 0x12, 0x15F6E);
-    wr32(a0 + 0xE, 0x16040);
+void InitEnemyShot(Enemy* a0, uint16_t d0, uint16_t d1, uint16_t d3, uint16_t d4, uint16_t d5, uint16_t d6) {
+    a0->x = d0;
+    a0->y = d1;
+    a0->vx = d3;
+    a0->vy = d4;
+    a0->z = d5;
+    a0->vz = d6;
+    a0->delay = 0;
+    a0->ai = Act::EnemyShotAi;
+    a0->draw = Draw::EnemyShot;
 }
 
 // 0x15F6E: enemy shot: flies until a wall, hits the target within 0x40
 // unless it passes over (the target jumping) or under (crouching) it.
-void h_015F6E(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    int16_t h = s16(uint16_t(rd16(a0 + 0x24) + rd16(a0 + 0x2E)));
+void EnemyShotAi(Enemy* a0) {
+    a0->delay = 0;
+    int16_t h = s16(uint16_t(a0->z + a0->vz));
     if (h < -0x1C) h = -0x1C;
     else if (h > 0x1C) h = 0x1C;
-    wr16(a0 + 0x24, uint16_t(h));
-    uint16_t nx = uint16_t(rd16(a0 + 0x20) + rd16(a0 + 0x2A)), ny = uint16_t(rd16(a0 + 0x22) + rd16(a0 + 0x2C));
-    if (sub_013D42(a0, nx, ny)) return sub_013554(a0);
-    wr16(a0 + 0x20, nx);
-    wr16(a0 + 0x22, ny);
-    uint32_t a3 = sub_01642C(a0);
-    if (!a3) return sub_013554(a0);
-    if (Distance(s16(uint16_t(rd16(a3 + 0x20) - nx)), s16(uint16_t(rd16(a3 + 0x22) - ny))) > 0x40) return;
-    int16_t jump = s16(U16{0xFF0E1A});
+    a0->z = uint16_t(h);
+    uint16_t nx = uint16_t(a0->x + a0->vx), ny = uint16_t(a0->y + a0->vy);
+    if (EnemyCollisionShape(a0, nx, ny)) return RemoveEnemy(a0);
+    a0->x = nx;
+    a0->y = ny;
+    Enemy* a3 = FindTarget(a0);
+    if (!a3) return RemoveEnemy(a0);
+    if (Distance(s16(uint16_t(a3->x - nx)), s16(uint16_t(a3->y - ny))) > 0x40) return;
+    int16_t jump = s16(st.view_z);
     if (h < -8) {
         if (jump > 0) return;
     } else if (h > 8 && jump < 0)
         return;
-    CallEnemyHit(rd32(a3 + 0xA), a3, 0x1F4, uint16_t(nx - rd16(a3 + 0x20)), uint16_t(ny - rd16(a3 + 0x22)));
-    U16{0xFF2716} = 0;
-    U16{0xFF2718} = 0;
-    sub_00D740(a0, 0x1B);
-    U16{0xFF2718} = 0xF;
-    sub_013554(a0);
+    HitObject(a3, 0x1F4, uint16_t(nx - a3->x), uint16_t(ny - a3->y));
+    st.speech_on = 0;
+    st.dac_hold = 0;
+    EnemySound(a0, 0x1B);
+    st.dac_hold = 0xF;
+    RemoveEnemy(a0);
 }
 
 // ---- The boss start cell (class 0x26, spawned by 0xA796): AI 0x15B1E, draw
@@ -1154,14 +1068,14 @@ namespace {
 
 // The cells of the 11x11 square around cell a0 (the cell of a2) that lie on
 // the map: fn(cell, column, row).
-template <class F> void around_11(uint32_t a0, uint32_t a2, F fn) {
-    int16_t row = int16_t((s16(rd16(a2 + 0x22)) >> 8) - 6);
-    uint32_t a1 = a0 - 0xA5;
+template <class F> void around_11(Cell a0, const Enemy* a2, F fn) {
+    int16_t row = int16_t((s16(a2->y) >> 8) - 6);
+    Cell a1 = a0 - 0xA5;
     for (int i = 0; i < 11; i++) {
         row++;
         if (row >= 0) {
             if (row >= 0x20) return;
-            int16_t col = int16_t((s16(rd16(a2 + 0x20)) >> 8) - 6);
+            int16_t col = int16_t((s16(a2->x) >> 8) - 6);
             for (int j = 0; j < 11; j++, a1++) {
                 col++;
                 if (col >= 0 && col < 0x20) fn(a1, col, row);
@@ -1172,337 +1086,304 @@ template <class F> void around_11(uint32_t a0, uint32_t a2, F fn) {
     }
 }
 
-uint32_t own_cell(uint32_t a0) { return enemy_map(a0) + cell_index(rd16(a0 + 0x20), rd16(a0 + 0x22)); }
+Cell own_cell(Enemy* a0) { return enemy_map(a0) + cell_index(a0->x, a0->y); }
 
 // 0x15D18: spawns the enemies of the start cells around (on a2's level).
-void sub_015D18(uint32_t a0, uint32_t a2) {
-    around_11(a0, a2, [&](uint32_t a1, int16_t, int16_t) {
-        uint8_t n = rd8(0x9F8E + rd8(cell_class + rd8(a1)));
+void BossCellSpawnEnemies(Cell a0, const Enemy* a2) {
+    around_11(a0, a2, [&](Cell a1, int16_t, int16_t) {
+        uint8_t n = kSpawnType[st.cell_class[map_cell(a1)]];
         if (!n) return;
         uint16_t saved = cur_level;
-        U8{0xFF1029} = rd8(a2 + 0x32);
-        sub_00A08E(n, a1);
+        set_low_byte(st.cur_level, a2->level);
+        SpawnEnemy(n, a1);
         cur_level = saved;
     });
 }
 
 // 0x15C74: opens the doors around.
-void sub_015C74(uint32_t a0, uint32_t a2) {
-    around_11(a0, a2, [&](uint32_t a1, int16_t col, int16_t row) {
-        uint8_t cls = rd8(cell_class + rd8(a1));
+void BossCellOpenDoors(Cell a0, const Enemy* a2) {
+    around_11(a0, a2, [&](Cell a1, int16_t col, int16_t row) {
+        uint8_t cls = st.cell_class[map_cell(a1)];
         if (cls == 6 || cls == 0x83)
-            sub_00B130(a1, uint16_t(col << 8), uint16_t(row << 8));
+            BossOpenDoorA(a1, uint16_t(col << 8), uint16_t(row << 8));
         else if (cls == 7 || cls == 0x84)
-            sub_00B168(a1, uint16_t(col << 8), uint16_t(row << 8));
+            BossOpenDoorB(a1, uint16_t(col << 8), uint16_t(row << 8));
     });
-    sub_00D760(0x67);
+    PlaySoundLocal(0x67);
 }
 
 // The target (0x1642C) and its distance; false when there is none within
 // 0xC00 (the cell then goes back to the map).
-bool boss_target(uint32_t a0, uint32_t& a1, uint16_t& d) {
-    a1 = sub_01642C(a0);
+bool boss_target(Enemy* a0, Enemy*& a1, uint16_t& d) {
+    a1 = FindTarget(a0);
     if (!a1) return false;
-    d = Distance(s16(uint16_t(rd16(a0 + 0x20) - rd16(a1 + 0x20))), s16(uint16_t(rd16(a0 + 0x22) - rd16(a1 + 0x22))));
+    d = Distance(s16(uint16_t(a0->x - a1->x)), s16(uint16_t(a0->y - a1->y)));
     return d <= 0xC00;
 }
 
 } // namespace
 
-void h_015B1E(uint32_t a0) {
-    wr8(a0 + 0x1F, 0);
-    uint32_t a1;
+// 0x15B1E
+void BossCellAi(Enemy* a0) {
+    a0->delay = 0;
+    Enemy* a1;
     uint16_t d;
-    uint8_t state = rd8(a0 + 0x34);
+    uint8_t state = a0->state;
     if (state == 0) {
-        if (!boss_target(a0, a1, d)) return loc_015ED2(a0);
-        bool hard = U16{0xFF1030} == 4;
+        if (!boss_target(a0, a1, d)) return BossCellDeath(a0);
+        bool hard = st.character == 4;
         if (a1 == player_struct && hard && d > 0x180) return;
         if (d > 0x300) return;
-        if (sub_0166A0(a0, rd16(a1 + 0x20), rd16(a1 + 0x22), rd16(a0 + 0x20), rd16(a0 + 0x22))) return;
-        wr8(a0 + 0x35, hard ? 0x31 : 0x21);
-        wr8(a0 + 0x34, 1);
+        if (EnemySightBlocked(a0, a1->x, a1->y, a0->x, a0->y)) return;
+        a0->count = hard ? 0x31 : 0x21;
+        a0->state = 1;
         return;
     }
     if (state != 1) {
-        if (!boss_target(a0, a1, d)) loc_015ED2(a0);
+        if (!boss_target(a0, a1, d)) BossCellDeath(a0);
         return;
     }
-    wr8(a0 + 0x35, uint8_t(rd8(a0 + 0x35) - 1));
-    if (rd8(a0 + 0x35)) {
-        if (!(rd8(a0 + 0x35) & 7)) sub_00D740(a0, 0x71);
+    a0->count = uint8_t(a0->count - 1);
+    if (a0->count) {
+        if (!(a0->count & 7)) EnemySound(a0, 0x71);
         return;
     }
-    wr8(a0 + 0x34, 2);
-    sub_015D18(own_cell(a0), a0);
-    sub_015C74(own_cell(a0), a0);
-    sub_00D740(a0, 0x70);
+    a0->state = 2;
+    BossCellSpawnEnemies(own_cell(a0), a0);
+    BossCellOpenDoors(own_cell(a0), a0);
+    EnemySound(a0, 0x70);
 }
 
 // 0x15D84: the cell sprite, blinking.
-void h_015D84(uint32_t, uint16_t d5, uint16_t d1) {
-    U16{0xFF1094} = d5;
-    int16_t d3 = s16(uint16_t(U16{0xFF0E1A} - U16{0xFF116E} - 0x20));
+void BossCellDraw(Enemy*, uint16_t d5, uint16_t d1) {
+    st.sprite_scale = d5;
+    int16_t d3 = s16(uint16_t(st.view_z - st.stair_height - 0x20));
     int16_t row = int16_t(uint16_t(((int32_t(s16(d5)) * d3) >> 6) + 0x28));
     int16_t h = int16_t(s16(d5) >> 1);
     h = int16_t(h - (h >> 2));
     int16_t w = int16_t(h >> 1);
-    U16{0xFF1088} = 0;
-    DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), row, (U8{0xFF0EB7} & 2) ? 0x1111BE : 0x110FBE);
+    st.sprite_mirror = 0;
+    DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), row, (uint8_t(st.frame) & 2) ? object_block(20) : object_block(19));
 }
 
 // 0x15E4E: a hit destroys it: it flies up as an explosion (0x15DD0).
-void h_015E4E(uint32_t a0) {
-    wr32(a0 + 0x12, 0x15DD0);
-    wr32(a0 + 0xE, 0x15DFC);
-    wr16(a0 + 4, rd16(a0 + 4) & 0xFF37);
-    wr32(a0 + 0x16, 0x13298);
-    wr32(a0 + 0xA, 0x13298);
-    wr8(a0 + 0x35, 0);
-    wr16(a0 + 0x24, 0x10);
-    wr16(a0 + 0x2E, 0);
+void BossCellHit(Enemy* a0) {
+    a0->ai = Act::BossCellBlastAi;
+    a0->draw = Draw::BossCellBlast;
+    a0->flags = a0->flags & 0xFF37;
+    a0->death = Act::None;
+    a0->hit = Hit::None;
+    a0->count = 0;
+    a0->z = 0x10;
+    a0->vz = 0;
     explosion_sound(a0, 0x8A, 0x1E);
-    link_state(a0, 0x16E5E);
 }
 
 // 0x15DD0
-void h_015DD0(uint32_t a0) {
-    uint16_t v = rd16(a0 + 0x2E);
-    wr16(a0 + 0x24, uint16_t(rd16(a0 + 0x24) - v));
-    wr16(a0 + 0x2E, uint16_t(v + 1));
-    if (s16(rd16(a0 + 0x24)) < -0x20) wr16(a0 + 0x24, 0xFFE0);
-    wr8(a0 + 0x35, uint8_t(rd8(a0 + 0x35) + 1));
-    if (rd8(a0 + 0x35) == 0xA) sub_013554(a0);
+void BossCellBlastAi(Enemy* a0) {
+    uint16_t v = a0->vz;
+    a0->z = uint16_t(a0->z - v);
+    a0->vz = uint16_t(v + 1);
+    if (s16(a0->z) < -0x20) a0->z = 0xFFE0;
+    a0->count = uint8_t(a0->count + 1);
+    if (a0->count == 0xA) RemoveEnemy(a0);
 }
 
 // 0x15DFC: the explosion, sized by step (table 0x15E48).
-void h_015DFC(uint32_t a0, uint16_t d5, uint16_t d1) {
+void BossCellBlastDraw(Enemy* a0, uint16_t d5, uint16_t d1) {
     int16_t row = sprite_row(a0, d5);
-    int16_t h = int16_t(s16(d5) >> rd8(0x15E48 + (rd8(a0 + 0x35) >> 1)));
+    int16_t h = int16_t(s16(d5) >> kBlastShift[a0->count >> 1]);
     int16_t w = int16_t(h >> 1);
-    U16{0xFF1088} = U16{0xFF0EB6} & 1;
-    DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), int16_t(row - w), 0x10EBBE);
+    st.sprite_mirror = st.frame & 1;
+    DrawSprite(h, w, int16_t(s16(d1) - (w >> 1)), int16_t(row - w), object_block(1));
 }
 
-// 0x15ED2: puts the cell (FF62EC) back on the map and removes the object.
-void loc_015ED2(uint32_t a0) {
-    uint32_t a1 = own_cell(a0);
-    if (a1 < 0xFF7CD6 || a1 >= 0xFFBCD6) a1 = 0xFFCCD6;
-    wr8(a1, U8{0xFF62EC});
-    sub_01C9A0(a1);
-    link_remove(a0);
+// 0x15ED2: puts the cell (first of class 0x26) back on the map and removes the object.
+void BossCellDeath(Enemy* a0) {
+    put_cell(own_cell(a0), st.class_cell[0x26]);
+    UnlinkEnemy(a0);
 }
 
 // 0x13182: timed item charges, used every 128 frames.
-void sub_013182() {
-    uint16_t d0 = U16{0xFF0EB6} & 0x7F;
-    if (!d0 && int16_t(uint16_t(U16{0xFF105E})) >= 0) d0 = sub_010BD8();
-    if (int16_t(uint16_t(U16{0xFF105E})) < 0 && int16_t(uint16_t(U16{0xFF1060})) >= 0) {
-        uint32_t d1 = 0xFF6196 + int16_t(uint16_t(U16{0xFF0E28} << 2));
-        U32{0xFF106A} = d1;
-        U32{0xFF106E} = d1 + 0x20;
-        if (!((d0 + 0x10) & 0x7F)) sub_010CC6();
+void UpdateItemCharges() {
+    uint16_t d0 = st.frame & 0x7F;
+    if (!d0 && int16_t(uint16_t(st.nv_slot)) >= 0) d0 = NightVisionCharge();
+    if (int16_t(uint16_t(st.nv_slot)) < 0 && int16_t(uint16_t(st.light_slot)) >= 0) {
+        int16_t d1 = int16_t(0x38 + (int16_t(uint16_t(st.bob_turn << 2)) >> 1));
+        st.lit_start = d1;
+        st.lit_end = int16_t(d1 + 0x10);
+        if (!((d0 + 0x10) & 0x7F)) LightCharge();
     }
-    if (!((U16{0xFF0EB6} + 0x30) & 0x7F) && int16_t(uint16_t(U16{0xFF1062})) >= 0) sub_010DC0();
+    if (!((st.frame + 0x30) & 0x7F) && int16_t(uint16_t(st.scanner_slot)) >= 0) ScannerCharge();
 }
 
 // 0x131E8: copies the player into the player's enemy struct (FF119C), then
 // removes enemies that left the map and runs the AI handler (+0x12) of the
 // others when their delay (+0x1F) runs out.
-void sub_0131E8() {
+void RunEnemies() {
     player_x = player_x & 0x1FFF;
     player_y = player_y & 0x1FFF;
-    const uint32_t p = 0xFF119C;
-    wr16(p + 0x24, U16{0xFF0E1A});
-    wr16(p + 0x20, player_x);
-    wr16(p + 0x22, player_y);
-    wr16(p + 0x2A, U16{0xFF0E00});
-    wr16(p + 0x2C, U16{0xFF0E02});
-    wr8(p + 0x32, U8{0xFF1029});
-    wr32(p + 0xA, 0xD800);
-    uint16_t n = enemy_count;
+    Enemy* p = player_struct;
+    p->z = st.view_z;
+    p->x = player_x;
+    p->y = player_y;
+    p->vx = st.dir_x;
+    p->vy = st.dir_y;
+    p->level = uint8_t(st.cur_level);
+    p->hit = Hit::Player;
+    uint16_t n = st.object_count;
     if (!n) return;
-    for (uint32_t a0 = enemy_list; n; n--) {
-        uint32_t next = rd32(a0);
-        uint16_t x = rd16(a0 + 0x20), y = rd16(a0 + 0x22);
-        wr16(a0 + 0x26, x);
-        wr16(a0 + 0x28, y);
-        uint8_t level = rd8(a0 + 0x32);
+    for (Enemy* a0 = first_object(); n; n--) {
+        Enemy* next = next_object(a0);
+        uint16_t x = a0->x, y = a0->y;
+        uint8_t level = a0->level;
         bool off_map = x >= 0x2000 || y >= 0x2000 || level > 0xF;
-        if (off_map && !(rd16(a0 + 4) & 0x20))
-            sub_013554(a0);
+        if (off_map && !(a0->flags & 0x20))
+            RemoveEnemy(a0);
         else {
-            wr8(a0 + 0x1F, uint8_t(rd8(a0 + 0x1F) - 1));
-            if (int8_t(rd8(a0 + 0x1F)) < 0) CallEnemyHandler(rd32(a0 + 0x12), a0);
+            a0->delay = uint8_t(a0->delay - 1);
+            if (int8_t(a0->delay) < 0) RunAct(a0->ai, a0);
         }
         a0 = next;
         if (!a0) return;
     }
 }
 
-// 0x149DE: drops the item FF62F2 on the first empty cell around the player.
-void sub_0149DE() {
-    uint32_t a1 = cur_map_ptr + cell_index(player_x, player_y);
+// 0x149DE: drops the item (first cell of class 0x2C) on the first empty cell around the player.
+void DropItemNearPlayer() {
+    Cell a1 = cur_map + cell_index(player_x, player_y);
     static const int16_t around[] = {0, -1, 1, -0x20, 0x20, 0x1F, 0x21, -0x1F, -0x21};
     for (int16_t d : around) {
-        if (rd8(a1 + d)) continue;
-        a1 += d;
-        if (a1 < 0xFF7CD6 || a1 >= 0xFFBCD6) a1 = 0xFFCCD6;
-        wr8(a1, U8{0xFF62F2});
-        sub_01C9A0(a1);
+        if (map_cell(a1 + d)) continue;
+        put_cell(a1 + d, st.class_cell[0x2C]);
         return;
     }
 }
 
 // 0x168AC: runs the death handler of every enemy without flag 0x20, then
 // resets the doors (0xB48A).
-void sub_0168AC() {
-    uint16_t n = enemy_count;
-    for (uint32_t a0 = enemy_list; n; n--) {
-        uint32_t next = rd32(a0);
-        if (!(rd16(a0 + 4) & 0x20)) enemy_die(a0);
+void KillAllEnemies() {
+    uint16_t n = st.object_count;
+    for (Enemy* a0 = first_object(); n; n--) {
+        Enemy* next = next_object(a0);
+        if (!(a0->flags & 0x20)) enemy_die(a0);
         a0 = next;
     }
-    loc_00B48A();
+    ResetDoors();
 }
 
 // 0x133A4: empties the enemy slots.
-void sub_0133A4() {
-    for (uint32_t a = 0xFF11E8; a < 0xFF11E8 + 0x980 * 2; a += 2) wr16(a, 0);
-    enemy_count = 0;
-    enemy_list = 0;
-    U16{0xFF0FF6} = 0;
+void ClearEnemies() {
+    for (Enemy& e : st.objects) e = {};
+    st.object_count = 0;
+    st.object_list = 0;
+    st.blood_count = 0;
 }
 
 // 0x13554: removes an enemy (in a link game, the other console as well).
-void sub_013554(uint32_t a0) {
-    if (link_mode) {
-        wr8(0xFF0FFA, 5);
-        wr8(0xFF0FFB, rd8(a0 + 0x3E));
-        sub_01C03A(0xFF0FFA);
-    }
-    sub_013526(a0);
+void RemoveEnemy(Enemy* a0) {
+    UnlinkEnemy(a0);
 }
 
-// Handlers stored in the enemy structs: AI (+0x12) and death (+0x16) take
-// the enemy, drawing (+0xE) also the scale d5 and column d1, hits (+0xA) the
-// distance d0 and the direction d3/d4 to the shooter.
-void CallEnemyHandler(uint32_t addr, uint32_t a0) {
-    switch (addr) {
-    case 0x13298: break;
-    case 0x13526: sub_013526(a0); break;
-    case 0x13554: sub_013554(a0); break;
-    case 0x13ADC: h_013ADC(a0); break;
-    case 0x13E42: h_013E42(a0); break;
-    case 0x13EC0: h_013EC0(a0); break;
-    case 0x13F7C: h_013F7C(a0); break;
-    case 0x14076: h_014076(a0); break;
-    case 0x14196: h_014196(a0); break;
-    case 0x1423A: h_01423A(a0); break;
-    case 0x142C6: h_0142C6(a0); break;
-    case 0x14454: h_014454(a0); break;
-    case 0x144FE: h_0144FE(a0); break;
-    case 0x14A56: h_014A56(a0); break;
-    case 0x14B08: h_014B08(a0); break;
-    case 0x158CC: h_0158CC(a0); break;
-    case 0x159EE: h_0159EE(a0); break;
-    case 0x15AC4: h_015AC4(a0); break;
-    case 0x182FC: h_0182FC(a0); break;
-    case 0x186B8: h_0186B8(a0); break;
-    case 0x1887A: h_01887A(a0); break;
-    case 0x18BC4: h_018BC4(a0); break;
-    case 0x19060: h_019060(a0); break;
-    case 0x19540: h_019540(a0); break;
-    case 0x19958: h_019958(a0); break;
-    case 0x19A48: h_019A48(a0); break;
-    case 0x1A324: h_01A324(a0); break;
-    case 0x1A92A: h_01A92A(a0); break;
-    case 0x1AEB4: h_01AEB4(a0); break;
-    case 0x1B6A2: // same code
-    case 0x19FD2: h_019FD2(a0); break;
-    case 0x1B078: h_01B078(a0); break;
-    case 0x14C2A: h_014C2A(a0); break;
-    case 0x14C40: h_014C40(a0); break;
-    case 0x15F6E: h_015F6E(a0); break;
-    case 0x15B1E: h_015B1E(a0); break;
-    case 0x15DD0: h_015DD0(a0); break;
-    case 0x15ED2: loc_015ED2(a0); break;
-    case 0x1943C: // same code
-    case 0x1A808:
-    case 0x18F5C: h_018F5C(a0); break;
-    case 0x18AD0: // same code
-    case 0x156D2:
-    case 0x1B97A: h_01B97A(a0); break;
-    default: untranslated(addr);
+// The handlers of an object: AI (+0x12) and death (+0x16), drawing (+0xE)
+// at scale d5 and column d1, hits (+0xA) with the distance d0 and the
+// direction d3/d4 to the shooter. Several original addresses ran the same code.
+void RunAct(Act act, Enemy* a0) {
+    switch (act) {
+    case Act::None: break;
+    case Act::Unlink: UnlinkEnemy(a0); break;
+    case Act::BombAi: BombAi(a0); break;
+    case Act::ExplodeOnPlayer: ExplodeOnPlayer(a0); break;
+    case Act::ExplodeOnPlayerShielded: ExplodeOnPlayerShielded(a0); break;
+    case Act::MineAi: MineAi(a0); break;
+    case Act::GrenadeAi: GrenadeAi(a0); break;
+    case Act::ExplosionAi: ExplosionAi(a0); break;
+    case Act::FireAi: FireAi(a0); break;
+    case Act::FireBallAi: FireBallAi(a0); break;
+    case Act::DieDropItem47: DieDropItem47(a0); break;
+    case Act::DieDropItem47Keep: DieDropItem47Keep(a0); break;
+    case Act::DieDropItem46Counted: DieDropItem46Counted(a0); break;
+    case Act::DieDropItem46Keep: DieDropItem46Keep(a0); break;
+    case Act::BloodAi: BloodAi(a0); break;
+    case Act::RemoveBlood: RemoveBlood(a0); break;
+    case Act::SparkAi: SparkAi(a0); break;
+    case Act::Type1Ai: Type1Ai(a0); break;
+    case Act::Type1BodyAi: Type1BodyAi(a0); break;
+    case Act::Type2Ai: Type2Ai(a0); break;
+    case Act::Type9Ai: Type9Ai(a0); break;
+    case Act::Type5Ai: Type5Ai(a0); break;
+    case Act::Type6Ai: Type6Ai(a0); break;
+    case Act::BodyAiWide: BodyAiWide(a0); break;
+    case Act::Type7Ai: Type7Ai(a0); break;
+    case Act::Type8Ai: Type8Ai(a0); break;
+    case Act::Type4Ai: Type4Ai(a0); break;
+    case Act::Type4BodyAi: Type4BodyAi(a0); break;
+    case Act::Type7BodyAi: Type7BodyAi(a0); break;
+    case Act::Type0Ai: Type0Ai(a0); break;
+    case Act::Type3Start: Type3Start(a0); break;
+    case Act::Type3Ai: Type3Ai(a0); break;
+    case Act::EnemyShotAi: EnemyShotAi(a0); break;
+    case Act::BossCellAi: BossCellAi(a0); break;
+    case Act::BossCellBlastAi: BossCellBlastAi(a0); break;
+    case Act::BossCellDeath: BossCellDeath(a0); break;
+    case Act::BodyAiBadClamp: BodyAiBadClamp(a0); break;
+    case Act::BodyAi: BodyAi(a0); break;
     }
 }
 
-void CallEnemyDraw(uint32_t addr, uint32_t a0, uint16_t d5, uint16_t d1) {
-    switch (addr) {
-    case 0x13298: break;
-    case 0x13F3E: h_013F3E(a0, d5, d1); break;
-    case 0x1402E: h_01402E(a0, d5, d1); break;
-    case 0x14150: h_014150(a0, d5, d1); break;
-    case 0x141E2: h_0141E2(a0, d5, d1); break;
-    case 0x14272: h_014272(a0, d5, d1); break;
-    case 0x159FE: h_0159FE(a0, d5, d1); break;
-    case 0x15AD6: h_015AD6(a0, d5, d1); break;
-    case 0x16040: h_016040(a0, d5, d1); break;
-    case 0x1856C: h_01856C(a0, d5, d1); break;
-    case 0x18660: h_018660(a0, d5, d1); break;
-    case 0x18A66: h_018A66(a0, d5, d1); break;
-    case 0x18AC8: body_frame(a0, 6, d5, d1); break;
-    case 0x18EE8: h_018EE8(a0, d5, d1); break;
-    case 0x18F50: body_walk(a0, 4, d5, d1); break;
-    case 0x193C8: h_0193C8(a0, d5, d1); break;
-    case 0x19430: body_walk(a0, 6, d5, d1); break;
-    case 0x198C4: h_0198C4(a0, d5, d1); break;
-    case 0x1994C: body_walk(a0, 6, d5, d1); break;
-    case 0x19ECA: h_019ECA(a0, d5, d1); break;
-    case 0x19FCA: body_frame(a0, 4, d5, d1); break;
-    case 0x1A722: h_01A722(a0, d5, d1); break;
-    case 0x1A7FC: body_walk(a0, 9, d5, d1); break;
-    case 0x1AD9A: h_01AD9A(a0, d5, d1); break;
-    case 0x1AE9E: body_frame(a0, 7, d5, d1); break;
-    case 0x1B562: h_01B562(a0, d5, d1); break;
-    case 0x1539E: h_01539E(a0, d5, d1); break;
-    case 0x15618: h_015618(a0, d5, d1); break;
-    case 0x15D84: h_015D84(a0, d5, d1); break;
-    case 0x15DFC: h_015DFC(a0, d5, d1); break;
-    case 0x1B68C: body_frame(a0, 0xB, d5, d1); break;
-    case 0x1B952: h_01B952(a0, d5, d1); break;
-    default: untranslated(addr);
+void DrawObject(Enemy* a0, uint16_t d5, uint16_t d1) {
+    switch (a0->draw) {
+    case Draw::None: break;
+    case Draw::Bomb: BombDraw(a0, d5, d1); break;
+    case Draw::Mine: MineDraw(a0, d5, d1); break;
+    case Draw::Grenade: GrenadeDraw(a0, d5, d1); break;
+    case Draw::Explosion: ExplosionDraw(a0, d5, d1); break;
+    case Draw::Fire: FireDraw(a0, d5, d1); break;
+    case Draw::Blood: BloodDraw(a0, d5, d1); break;
+    case Draw::Spark: SparkDraw(a0, d5, d1); break;
+    case Draw::EnemyShot: EnemyShotDraw(a0, d5, d1); break;
+    case Draw::Type1: Type1Draw(a0, d5, d1); break;
+    case Draw::Type1Body: Type1BodyDraw(a0, d5, d1); break;
+    case Draw::Type2: Type2Draw(a0, d5, d1); break;
+    case Draw::BodyFrame6: body_frame(a0, 6, d5, d1); break;
+    case Draw::Type9: Type9Draw(a0, d5, d1); break;
+    case Draw::BodyWalk4: body_walk(a0, 4, d5, d1); break;
+    case Draw::Type5: Type5Draw(a0, d5, d1); break;
+    case Draw::BodyWalk6: body_walk(a0, 6, d5, d1); break;
+    case Draw::Type6: Type6Draw(a0, d5, d1); break;
+    case Draw::Type7: Type7Draw(a0, d5, d1); break;
+    case Draw::BodyFrame4: body_frame(a0, 4, d5, d1); break;
+    case Draw::Type8: Type8Draw(a0, d5, d1); break;
+    case Draw::BodyWalk9: body_walk(a0, 9, d5, d1); break;
+    case Draw::Type4: Type4Draw(a0, d5, d1); break;
+    case Draw::BodyFrame7: body_frame(a0, 7, d5, d1); break;
+    case Draw::Type0: Type0Draw(a0, d5, d1); break;
+    case Draw::Type3: Type3Draw(a0, d5, d1); break;
+    case Draw::Type3Body: Type3BodyDraw(a0, d5, d1); break;
+    case Draw::BossCell: BossCellDraw(a0, d5, d1); break;
+    case Draw::BossCellBlast: BossCellBlastDraw(a0, d5, d1); break;
+    case Draw::BodyFrame11: body_frame(a0, 0xB, d5, d1); break;
+    case Draw::Stunned: StunnedDraw(a0, d5, d1); break;
     }
 }
 
-void CallEnemyHit(uint32_t addr, uint32_t a0, uint16_t d0, uint16_t d3, uint16_t d4) {
-    switch (addr) {
-    case 0x13298: break;
-    case 0xD800: sub_00D800(d0, d3, d4); break;
-    case 0x13AD2: h_013AD2(a0, d0); break;
-    case 0x1999A: h_01999A(a0, d0, d3, d4); break;
-    case 0x1A154: h_01A154(a0, d0, d3, d4); break;
-    case 0x1A84A: h_01A84A(a0, d0, d3, d4); break;
-    case 0x1AFC6: h_01AFC6(a0, d0, d3, d4); break;
-    case 0x1B824: h_01B824(a0, d0, d3, d4); break;
-    case 0x1570C: h_01570C(a0, d0, d3, d4); break;
-    case 0x15E4E: h_015E4E(a0); break;
-    case 0x1575C: h_01575C(a0, d0, d3, d4); break;
-    case 0x1947E: // same code
-    case 0x18F9E: h_018F9E(a0, d0, d3, d4); break;
-    case 0x1901C: // same code
-    case 0x194FC:
-    case 0x19A04:
-    case 0x1A8C8: h_01901C(a0, d0, d3, d4); break;
-    case 0x18B12: // same code
-    case 0x187C8: h_0187C8(a0, d0, d3, d4); break;
-    case 0x18832: // same code
-    case 0x18B7C:
-    case 0x1A1CC:
-    case 0x1B030:
-    case 0x1B890:
-    case 0x1B9BC: h_01B9BC(a0, d0, d3, d4); break;
-    default: untranslated(addr);
+void HitObject(Enemy* a0, uint16_t d0, uint16_t d3, uint16_t d4) {
+    switch (a0->hit) {
+    case Hit::None: break;
+    case Hit::Player: HitPlayer(d0, d3, d4); break;
+    case Hit::Bomb: BombHit(a0, d0); break;
+    case Hit::Type6: Type6Hit(a0, d0, d3, d4); break;
+    case Hit::Type7: Type7Hit(a0, d0, d3, d4); break;
+    case Hit::Type8: Type8Hit(a0, d0, d3, d4); break;
+    case Hit::Type4: Type4Hit(a0, d0, d3, d4); break;
+    case Hit::Type0: Type0Hit(a0, d0, d3, d4); break;
+    case Hit::Type3Body: Type3BodyHit(a0, d0, d3, d4); break;
+    case Hit::BossCell: BossCellHit(a0); break;
+    case Hit::Type3: Type3Hit(a0, d0, d3, d4); break;
+    case Hit::Walker: WalkerHit(a0, d0, d3, d4); break;
+    case Hit::Body: BodyHit(a0, d0, d3, d4); break;
+    case Hit::Type1: Type1Hit(a0, d0, d3, d4); break;
+    case Hit::BodyFlip: BodyHitFlip(a0, d0, d3, d4); break;
     }
 }
 

@@ -12,8 +12,6 @@ void init(Audio* audio, const std::string& data_dir);
 void start_seq(int seq);
 void stop_seq(int seq);
 void stop_all();
-void pause_all();
-void resume_all();
 void program(int ch, int patch);
 void dac_rate(int ch, int rate);
 void note_on(int ch, int note);

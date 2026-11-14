@@ -1,17 +1,17 @@
 #include "game.hpp"
+#include "display.hpp"
+#include "hires.hpp"
+#include "savegame.hpp"
 
 #include "../host.hpp"
-#include "../md/vdp.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace game {
 
-bool untranslated_throws = false;
-
 void untranslated(uint32_t addr) {
-    if (untranslated_throws) throw Untranslated{addr};
     std::fprintf(stderr, "reached untranslated code at 0x%06X (frame %u)\n", addr, host::frame_count);
     std::exit(2);
 }
@@ -20,112 +20,93 @@ void untranslated(uint32_t addr) {
 // reports overseas NTSC, which the header ("JUE") accepts, so the
 // "DEVELOPED FOR USE ONLY WITH..." screen at 0x332 is never shown.
 static void power_on() {
-    static const uint8_t vdp_regs[24] = {0x04, 0x14, 0x30, 0x3C, 0x07, 0x6C, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00,
-                                         0x81, 0x37, 0x00, 0x01, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x80};
-    rd16(VDP_CTRL);
-    for (int i = 0; i < 24; i++) vdp_ctrl(uint16_t(0x8000 | i << 8 | vdp_regs[i]));
-    vdp_ctrl32(0x40000080); // VRAM fill from 0
-    vdp_data(0);
-    for (auto& b : ram) b = 0;
-    vdp_ctrl32(0x81048F02);
-    vdp_ctrl32(0xC0000000);
-    for (int i = 0; i < 32; i++) vdp_data32(0);
-    vdp_ctrl32(0x40000010);
-    for (int i = 0; i < 20; i++) vdp_data32(0);
+    display::reset();
+    std::memset(&st, 0, sizeof st);
     int_mask = 7;
+}
+
+// The VDP's HV counter as the seed loops read it: the hardware's sequence.
+uint16_t ReadHvCounter() {
+    static uint16_t hv = 0;
+    return hv = uint16_t(hv * 0x6255 + 0x3619);
 }
 
 // 0x976
 static void main_init() {
-    vdp_ctrl(0x8F02);
-    sub_000BD2(0xFFEFFC);
+    ClearRam();
     // 0xA3C: the seed sums 10000 reads of the HV counter.
     uint32_t seed = 0x82647359;
-    for (int i = 0; i < 10000; i++) seed += uint32_t(int32_t(int16_t(rd16(0xC00008))));
+    for (int i = 0; i < 10000; i++) seed += uint32_t(int32_t(int16_t(ReadHvCounter())));
     random_seed = host::opt.seed >= 0 ? uint32_t(host::opt.seed) : seed;
-    vdp_ctrl32(0xC0000000);
-    for (int i = 0; i < 32; i++) vdp_data32(0);
-    vdp_ctrl32(0x40000000);
-    for (int i = 0; i < 0x4000; i++) vdp_data32(0);
-    while (vdp_dma_busy()) {}
-
-    // 0x8F8: is a pad (id 0x0D) or six-button pad (id 0x04) in port 1?
-    wr8(0xA10009, 0x40);
-    wr8(0xA10003, 0x40);
-    uint8_t d0 = rd8(0xA10003);
-    wr8(0xA10003, 0x00);
-    uint8_t d1 = rd8(0xA10003);
-    wr8(0xA10003, 0x40);
-    uint8_t id = uint8_t((d0 & 0xC ? 8 : 0) | (d0 & 3 ? 4 : 0) | (d1 & 0xC ? 2 : 0) | (d1 & 1));
-    pad_present = (id == 4 || id == 0x0D) ? 1 : 0;
-
-    sub_000BF2();
+    for (int i = 0; i < 0x40; i++) display::pal[i] = 0;
+    display::clear_vram();
+    // 0x8F8 checks for a pad in port 1: the host always has one.
+    SetGameVdpRegs();
     fb_dma_pending = 0;
-    sub_01BFF0();
+    display::hmode = 0; // 0x1BFF0 (no link cable): full screen scroll
     int_mask = 5;
     sound_init();
     PlaySound(3);
-    sub_05711E();
-    sub_01CDEE();
+    SpinningSegaLogo();
+    BootLogo();
 }
 
 // 0xD98: title, story, character select and the game, until a full restart.
 static void main_loop() {
     for (;;) {
         uint16_t s = last_sound;
-        if (s <= 2 || s == 0x88) sub_0C62E8();
-        link_mode = 0;
-        U16{0xFF271A} = 1;
+        if (s <= 2 || s == 0x88) StopMusic();
+        st.indoors = 1;
         cur_area = 0;
-        sub_01C9CA();
+        TitleMenu();
         if (!demo_mode) {
+            if (int slot = take_load(); slot >= 0) { // title LOAD: snapshot has the character already
+                request_load(slot); // forward to GameLevelLoop (take_load consumes)
+                if (GameLevelLoop() == 3) continue; // quit to title
+                return;
+            }
             uint16_t story = 0;
             bool show = true;
-            if (U8{0xFF28FD}) {
+            if (st.start_level) {
                 story = 1;
-                if (U8{0xFF28FD} != 0x10) {
+                if (st.start_level != 0x10) {
                     story = 2;
-                    if (U8{0xFF28FD} != 0x20) show = false;
+                    if (st.start_level != 0x20) show = false;
                 }
             }
             if (show) {
-                sub_0CAA4E(story, 0x13298);
-                sub_000BF2();
+                StoryScreen(story, 0x13298);
+                SetGameVdpRegs();
             }
-            sub_000FC0();
-            U16{0xFF1030} = 0;
-            sub_0C6362(0x13298);
-            GameLevelLoop();
+            NewGame();
+            st.character = 0;
+            CharacterSelect(0x13298);
+            if (GameLevelLoop() == 3) continue; // Esc menu: quit to title
             return;
         }
         // Attract mode: the demo story screen, then a recorded game.
-        uint16_t d7 = sub_0CAA4E(3, 0x13298);
-        sub_000BF2();
+        uint16_t d7 = StoryScreen(3, 0x13298);
+        SetGameVdpRegs();
         if (d7) continue;
         uint16_t area = cur_area;
-        sub_000FC0();
+        NewGame();
         level_id = uint8_t(area << 4);
         uint32_t r = Random();
-        U16{0xFF1030} = uint16_t((r & 0x400) / 0xCD);
-        uint16_t link = link_mode;
-        link_mode = 0;
-        sub_0C5DAC();
-        uint16_t result = GameLevelLoop();
-        link_mode = link;
-        if (result == 1) return;
+        st.character = uint16_t((r & 0x400) / 0xCD);
+        StopAllSound();
+        if (GameLevelLoop() == 1) return;
     }
 }
 
 [[noreturn]] void Reset() {
     power_on();
     // 0x690
-    if (!warm_boot) {
-        sub_000BD2(0xFFEFFC);
-        warm_boot = 0xFFFF;
-        for (int i = 0; i < 9; i++) wr8(password + i, 0x5F);
-        wr8(password + 9, 0);
+    if (!st.warm_boot) {
+        ClearRam();
+        st.warm_boot = 0xFFFF;
+        for (int i = 0; i < 9; i++) st.password[i] = 0x5F;
+        st.password[9] = 0;
         sound_options = 0x0F;
-        U16{0xFF0016} = 0;
     }
     host::set_vblank_handler(VBlank);
     for (;;) {
@@ -149,21 +130,18 @@ uint32_t Random() {
 // 0xAA2
 void VBlank() {
     vblank_count += 1;
-    U16{0xFF2916} += 1;
-    U16{0xFF08CC} -= 1;
-    if (U16{0xFF2718}) U16{0xFF2718} -= 1;
+    st.speech_timer -= 1;
+    if (st.dac_hold) st.dac_hold -= 1;
     if (!fb_dma_pending) return;
-    vdp_ctrl(0x8174);
     fb_dma_pending -= 1;
     if (fb_dma_pending == 0) {
-        // Second half of the 3D view: 0xA00 words from FF4D26 to VRAM 0x1420.
-        for (uint16_t r : {0x9300, 0x940A, 0x9593, 0x96A6, 0x977F, 0x5420, 0x0080}) vdp_ctrl(r);
+        // Second half of the 3D view (was DMA'd to VRAM, never shown).
     } else {
-        // First half: FF3926 to VRAM 0x0020.
-        for (uint16_t r : {0x9300, 0x940A, 0x9593, 0x969C, 0x977F, 0x4020, 0x0080}) vdp_ctrl(r);
-        U16 flash{0xFF1072};
+        // First half: swap in the recorded high-resolution view.
+        hires::show();
+        auto& flash = st.hit_flash;
         if (flash) {
-            if (U16{0xFF0DE2}) {
+            if (st.dying) {
                 if (flash > 0xF) flash -= 0x110;
                 else {
                     flash -= 1;
@@ -173,190 +151,139 @@ void VBlank() {
                 flash -= 3;
                 if (int16_t(uint16_t(flash)) < 0) flash = 0;
             }
-            vdp_ctrl32(0xC07E0000);
-            vdp_data(flash);
+            display::pal[63] = flash;
         }
     }
-    vdp_ctrl(0x8164);
-    vdp_ctrl32(0x73600002);
 }
 
-// 0x744: queues a 68k -> VRAM DMA (len words from src to dest) for sub_00079A.
-void sub_000744(uint32_t src, uint16_t dest, uint16_t len) {
-    uint32_t q = vdp_queue_ptr;
-    auto put = [&](uint16_t v) { wr16(q, v); q += 2; };
-    put(uint16_t(0x9300 | (len & 0xFF)));
-    put(uint16_t(0x9400 | (len >> 8 & 0xFF)));
-    src >>= 1;
-    put(uint16_t(0x9500 | (src & 0xFF)));
-    put(uint16_t(0x9600 | (src >> 8 & 0xFF)));
-    put(uint16_t(0x9700 | (src >> 16 & 0x7F)));
-    put(uint16_t((dest & 0x3FFF) + 0x4000));
-    put(uint16_t((dest >> 14) | 0x80));
-    vdp_queue_ptr = q;
-}
+// 0x744
+void QueueVramDma(uint8_t src) { st.dma_queue[st.dma_count++] = src; }
 
-// 0x79A: runs the queued DMAs.
-void sub_00079A() {
-    uint32_t q = vdp_queue;
-    vdp_ctrl(0x8174);
+// 0x79A: runs the queued DMAs into the display buffers.
+void RunDmaQueue() {
     int saved = int_mask;
     int_mask = 7;
-    while (rd32(q) != 0xFFFFFFFF) {
-        vdp_ctrl32(rd32(q));
-        vdp_ctrl32(rd32(q + 4));
-        vdp_ctrl32(rd32(q + 8));
-        vdp_ctrl(rd16(q + 12));
-        q += 14;
-        while (vdp_dma_busy()) {}
-        vdp_ctrl32(0x00000020);
+    for (int i = 0; i < st.dma_count; i++) {
+        uint8_t src = st.dma_queue[i];
+        if (src == kTitleHscroll)
+            for (int k = 0; k < 0x1C0; k++) (k & 1 ? display::hscrollB : display::hscrollA)[(k >> 1) % display::H] = st.title_hscroll[k];
+        else
+            display::upload_tiles(0x500, 21, assets::tiles(kHandTiles[src].file, kHandTiles[src].cells).data());
     }
-    vdp_queue_ptr = vdp_queue;
+    st.dma_count = 0;
     int_mask = saved;
-    vdp_ctrl(0x8164);
 }
 
-// 0x804: reads the pad in port 1 into pad_buttons / pad_extra.
+// 0x804: reads the pad in port 1 into pad_buttons (the six-button pad's
+// X/Y/Z/Mode, which nothing uses, are left out).
 void ReadPad() {
-    if (!pad_present) return;
-    const uint32_t port = 0xA10003;
-    pad_prev = U16{0xFF002E};
-    wr8(port, 0x40);
-    uint8_t d0 = rd8(port);
-    wr8(port, 0);
-    uint8_t d1 = rd8(port);
-    wr8(port, 0x40);
-    uint8_t d2 = rd8(port);
-    wr8(port, 0);
-    d2 = rd8(port);
-    wr8(port, 0x40);
-    d2 = rd8(port);
-    wr8(port, 0);
-    uint8_t d3 = rd8(port);
-    wr8(port, 0x40);
-    uint16_t d4 = rd8(port);
-    wr8(port, 0);
-    d2 = rd8(port);
-    wr8(port, 0x40);
-    if (((d3 & 0xF) ^ (d2 & 0xF)) == 0xF) d4 &= ~0x10; // six-button pad: d4 holds X/Y/Z/Mode
-    else d4 = 0xFF;
-    uint16_t w1 = uint16_t(d1 << 2);
-    d0 = rd8(port);
-    if (w1 & 0x30) w1 = 0xFF;
-    uint16_t buttons = uint16_t((d0 & 0x3F) | (w1 & 0xC0));
-    pad_buttons = uint8_t(~buttons);
-    pad_extra = uint8_t(~d4);
+    st.pad_prev = st.pad_buttons;
+    pad_buttons = host::pad();
 }
 
-// 0xBAE: waits for the 3D view DMA, then writes count+1 words to CRAM from src.
-void sub_000BAE(uint32_t src, int count) {
+// 0xBAE: waits for the 3D view DMA, then writes count+1 words to the palette from src.
+void WriteCram(const uint16_t* src, int count) {
     while (fb_dma_pending) host::frame();
     int saved = int_mask;
     int_mask = 7;
-    vdp_ctrl32(0xC0000000);
-    for (int i = 0; i <= count; i++, src += 2) vdp_data(rd16(src));
+    for (int i = 0; i <= count; i++) display::pal[i] = src[i];
     int_mask = saved;
 }
 
-// 0xBD2: clears RAM from FF0018 up to the stack pointer, and FFF000-FFFFFF.
-void sub_000BD2(uint32_t stack_top) {
-    for (uint32_t a = 0xFF0018; a < stack_top; a += 2) wr16(a, 0);
-    for (uint32_t a = 0xFFF000; a < 0x1000000; a += 4) wr32(a, 0);
+// 0xBD2: clears RAM from FF0018 up to the stack (FFEFFC) and FFF000-FFFFFF:
+// all the state but the variables before the pad's.
+void ClearRam() {
+    uint16_t vblank = st.vblank_count, dma = st.fb_dma_pending, warm = st.warm_boot, sound = st.sound_options;
+    uint32_t seed = st.random_seed;
+    uint8_t password[sizeof st.password];
+    std::memcpy(password, st.password, sizeof password);
+    std::memset(&st, 0, sizeof st);
+    st.vblank_count = vblank;
+    st.fb_dma_pending = dma;
+    st.warm_boot = warm;
+    st.random_seed = seed;
+    std::memcpy(st.password, password, sizeof password);
+    st.sound_options = sound;
 }
 
-// 0xBF2: VDP registers for the game screens.
-void sub_000BF2() {
-    uint32_t t = link_sr == 0x2100 ? 0x2298 : 0x2272;
-    for (int i = 0; i <= 0x12; i++) vdp_ctrl(rd16(t + i * 2));
-    vdp_ctrl32(0x78000002);
-    vdp_data32(0);
-    vdp_data32(0);
-    vdp_ctrl32(0x7C000002);
-    vdp_data32(0);
-    vdp_ctrl32(0x40000010);
-    vdp_data32(0);
+// 0xBF2: display mode for the game screens (register table 0x2272; 0x2298
+// with a link cable): plane A at 0xE000, plane B at 0xC000, 64x32 cells,
+// full screen scroll, no window.
+void SetGameVdpRegs() {
+    display::ntA = 0xE000;
+    display::ntB = 0xC000;
+    display::pwA = display::pwB = 64;
+    display::phA = display::phB = 32;
+    display::hmode = 0;
+    display::win_h = display::win_v = 0;
+    display::clear_sprites();
+    display::hscrollA[0] = display::hscrollB[0] = 0;
+    display::vscrollA = display::vscrollB = 0;
 }
 
 // 0xC5A
-void sub_000C5A() {
-    vdp_ctrl32(0x40000003);
-    for (int i = 0; i <= 0x6FF; i++) vdp_data(0);
-    vdp_ctrl32(0x7C000002);
-    vdp_data(0);
-    vdp_data(0);
-    vdp_ctrl32(0x40000010);
-    vdp_data(0);
-    vdp_data(0);
+void ClearPlaneB() {
+    display::fill_b(0, 0x700);
+    display::hscrollA[0] = display::hscrollB[0] = 0;
+    display::vscrollA = display::vscrollB = 0;
 }
 
 // 0xCAA
-void sub_000CAA() {
-    vdp_ctrl32(0x40000000);
-    for (int i = 0; i < 8; i++) vdp_data32(0);
-    vdp_ctrl32(0x60000003);
-    for (int i = 0; i <= 0x7FF; i++) vdp_data(0x8000);
-    vdp_ctrl32(0x7C000002);
-    vdp_data(0);
-    vdp_data(0);
-    vdp_ctrl32(0x40000010);
-    vdp_data(0);
-    vdp_data(0);
+void ClearPlaneA() {
+    std::memset(display::tiles[0], 0, sizeof display::tiles[0]);
+    display::fill_a(0x8000, 0x800);
+    display::hscrollA[0] = display::hscrollB[0] = 0;
+    display::vscrollA = display::vscrollB = 0;
 }
 
 // 0xD36: reads the pad, or replays/records the demo input (demo_mode 1 / 2).
-void sub_000D36() {
+void ReadInput() {
     uint16_t mode = demo_mode;
     if (!mode) {
         ReadPad();
         return;
     }
-    U16 left{0xFF06DA};
-    U32 ptr{0xFF06DE};
-    if (mode != 1) {
+    auto& left = st.demo_left;
+    if (mode != 1) { // records into the demo's ROM bytes, which keep nothing
         left -= 1;
-        if (!left) U16{0xFF2722} = 1;
+        if (!left) st.level_exit = 1;
         ReadPad();
-        wr8(ptr, pad_buttons);
-        ptr += 1;
+        st.demo_pos += 1;
         return;
     }
     left -= 1;
-    if (!left) U16{0xFF2722} = 1;
+    if (!left) st.level_exit = 1;
     ReadPad();
     if (pad_buttons & 0x80) {
-        U16{0xFF2722} = 1;
+        st.level_exit = 1;
         demo_mode = 3;
     }
-    pad_buttons = rd8(ptr);
-    ptr += 1;
+    pad_buttons = demo_inputs()[st.demo_pos++];
 }
 
 // 0xFC0: new game: health, lives and inventory, then the password.
-void sub_000FC0() {
-    U8{0xFF2732} = 0;
+void NewGame() {
+    st.area_password[0] = 0;
     level_id = 0;
-    U8{0xFF28FB} = 0x64;
-    for (uint32_t a = 0xFF28EC; a <= 0xFF28F0; a++) wr8(a, 1);
-    for (uint32_t a = 0xFF28F1; a <= 0xFF28FA; a++) wr8(a, 0);
+    st.carry_health = 0x64;
+    for (uint8_t& a : st.alive) a = 1;
+    for (int i = 0; i < 5; i++) st.carry_weapon[i] = st.carry_ammo[i] = 0;
     if (demo_mode) return;
-    sub_058A74(password);
-    level_id = U8{0xFF28FD};
+    DecodePassword(st.password);
+    level_id = st.start_level;
 }
 
 } // namespace game
 
 namespace game {
 
-// 0x1D18: terminates the sprite list built at FF0044 and queues its DMA to 0xB800.
-void sub_001D18() {
-    uint32_t a0 = U32{0xFF003E};
-    if (a0 != 0xFF0044) wr8(a0 - 5, 0);
-    else {
-        wr32(a0, 0);
-        wr32(a0 + 4, 0);
-        a0 += 8;
-    }
-    sub_000744(0xFF0044, 0xB800, uint16_t((a0 - 0xFF0044) >> 1));
+// 0x1D18: terminates the sprite list and shows it (the original queues its
+// DMA to 0xB800).
+void QueueSpriteListDma() {
+    uint16_t n = st.sprite_end;
+    if (n) set_low_byte(st.sprites[n - 1].link, 0);
+    else st.sprites[n++] = {};
+    display::upload_sprites(st.sprites, n);
 }
 
 } // namespace game

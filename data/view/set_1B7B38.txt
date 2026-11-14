@@ -1,0 +1,420 @@
+# Sprite set (src/game/sprites.cpp), blocks in set_1B7B38.png.
+# "anim" starts an animation, "view" one of its views (1, 2, 4, 6 or 8, by
+# the angle it is seen from), each "part" one frame of the view: anchor x and
+# y (0 left/top, 1 centre, 2 right/bottom), block width and height (1/32 and
+# 1/16 of the scale), then rows of block numbers separated by "/", "m" = mirrored.
+anim
+view
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 2 / 10
+part 1 2 6 6: 2 / 9m
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 2 / 10m
+part 1 2 6 6: 2 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 33 / 38m
+part 1 2 6 6: 33 / 38m
+part 1 2 6 6: 34 / 39m
+part 1 2 6 6: 34 / 40m
+part 1 2 6 6: 33 / 38m
+part 1 2 6 6: 34 / 41m
+part 1 2 6 6: 34 / 42m
+view
+part 1 2 6 6: 31 / 38
+part 1 2 6 6: 31 / 38
+part 1 2 6 6: 32 / 39
+part 1 2 6 6: 32 / 40
+part 1 2 6 6: 31 / 38
+part 1 2 6 6: 32 / 41
+part 1 2 6 6: 32 / 42
+anim
+view
+part 1 2 6 6: 2 / 8
+part 1 2 6 6: 2 / 8
+part 1 2 6 6: 2 / 10
+part 1 2 6 6: 2 / 9m
+part 1 2 6 6: 2 / 8
+part 1 2 6 6: 2 / 10m
+part 1 2 6 6: 2 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 49 / 38m
+part 1 2 6 6: 49 / 38m
+part 1 2 6 6: 49 / 39m
+part 1 2 6 6: 49 / 40m
+part 1 2 6 6: 49 / 38m
+part 1 2 6 6: 49 / 41m
+part 1 2 6 6: 49 / 42m
+view
+part 1 2 6 6: 46 / 38
+part 1 2 6 6: 46 / 38
+part 1 2 6 6: 46 / 39
+part 1 2 6 6: 46 / 40
+part 1 2 6 6: 46 / 38
+part 1 2 6 6: 46 / 41
+part 1 2 6 6: 46 / 42
+anim
+view
+part 1 2 6 6: 3 / 8
+part 1 2 6 6: 3 / 8
+part 1 2 6 6: 3 / 10
+part 1 2 6 6: 3 / 9m
+part 1 2 6 6: 3 / 8
+part 1 2 6 6: 3 / 10m
+part 1 2 6 6: 3 / 9
+view
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 39m
+part 1 2 6 6: 50 / 40m
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 41m
+part 1 2 6 6: 50 / 42m
+view
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 39m
+part 1 2 6 6: 50 / 40m
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 41m
+part 1 2 6 6: 50 / 42m
+view
+part 1 2 6 6: 50m / 38
+part 1 2 6 6: 50m / 38
+part 1 2 6 6: 50m / 39
+part 1 2 6 6: 50m / 40
+part 1 2 6 6: 50m / 38
+part 1 2 6 6: 50m / 41
+part 1 2 6 6: 50m / 42
+anim
+view
+part 1 2 6 6: 4 / 8
+part 1 2 6 6: 4 / 8
+part 1 2 6 6: 4 / 10
+part 1 2 6 6: 4 / 9m
+part 1 2 6 6: 4 / 8
+part 1 2 6 6: 4 / 10m
+part 1 2 6 6: 4 / 9
+anim
+view
+part 1 2 6 6: 5 / 8
+part 1 2 6 6: 5 / 8
+part 1 2 6 6: 5 / 10
+part 1 2 6 6: 5 / 9m
+part 1 2 6 6: 5 / 8
+part 1 2 6 6: 5 / 10m
+part 1 2 6 6: 5 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 53m / 38m
+part 1 2 6 6: 53m / 38m
+part 1 2 6 6: 53m / 39m
+part 1 2 6 6: 53m / 40m
+part 1 2 6 6: 53m / 38m
+part 1 2 6 6: 53m / 41m
+part 1 2 6 6: 53m / 42m
+view
+part 1 2 6 6: 53 / 38
+part 1 2 6 6: 53 / 38
+part 1 2 6 6: 53 / 39
+part 1 2 6 6: 53 / 40
+part 1 2 6 6: 53 / 38
+part 1 2 6 6: 53 / 41
+part 1 2 6 6: 53 / 42
+anim
+view
+part 1 2 6 6: 54 / 8
+part 1 2 6 6: 54 / 8
+part 1 2 6 6: 54 / 10
+part 1 2 6 6: 54 / 9m
+part 1 2 6 6: 54 / 8
+part 1 2 6 6: 54 / 10m
+part 1 2 6 6: 54 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 55m / 38m
+part 1 2 6 6: 55m / 38m
+part 1 2 6 6: 55m / 39m
+part 1 2 6 6: 55m / 40m
+part 1 2 6 6: 55m / 38m
+part 1 2 6 6: 55m / 41m
+part 1 2 6 6: 55m / 42m
+view
+part 1 2 6 6: 55 / 38
+part 1 2 6 6: 55 / 38
+part 1 2 6 6: 55 / 39
+part 1 2 6 6: 55 / 40
+part 1 2 6 6: 55 / 38
+part 1 2 6 6: 55 / 41
+part 1 2 6 6: 55 / 42
+anim
+view
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 35 / 43
+part 1 2 6 6: 36 / 44
+part 1 2 6 6: 37 / 45
+anim
+view
+part 1 2 6 6: 6 / 10
+anim
+view
+part 1 2 6 6: 20 / 12
+anim
+view
+part 1 2 6 6: 7 / 10
+anim
+view
+part 1 2 6 6: 14
+anim
+view
+part 1 2 6 6: 15
+part 1 2 6 6: 15m
+anim
+view
+part 1 2 6 6: 13 / 8
+part 1 2 6 6: 13 / 8
+part 1 2 6 6: 13 / 10
+part 1 2 6 6: 13 / 9m
+part 1 2 6 6: 13 / 8
+part 1 2 6 6: 13 / 10m
+part 1 2 6 6: 13 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 57 / 38m
+part 1 2 6 6: 57 / 38m
+part 1 2 6 6: 57 / 39m
+part 1 2 6 6: 57 / 40m
+part 1 2 6 6: 57 / 38m
+part 1 2 6 6: 57 / 41m
+part 1 2 6 6: 57 / 42m
+view
+part 1 2 6 6: 56 / 38
+part 1 2 6 6: 56 / 38
+part 1 2 6 6: 56 / 39
+part 1 2 6 6: 56 / 40
+part 1 2 6 6: 56 / 38
+part 1 2 6 6: 56 / 41
+part 1 2 6 6: 56 / 42
+anim
+view
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 0 / 8
+part 1 2 6 6: 35 / 43
+part 1 2 6 6: 36 / 44
+part 1 2 6 6: 51 / 52
+anim
+view
+part 1 2 6 6: 3 / 8
+part 1 2 6 6: 3 / 8
+part 1 2 6 6: 3 / 10
+part 1 2 6 6: 3 / 9m
+part 1 2 6 6: 3 / 8
+part 1 2 6 6: 3 / 10m
+part 1 2 6 6: 3 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 39m
+part 1 2 6 6: 50 / 40m
+part 1 2 6 6: 50 / 38m
+part 1 2 6 6: 50 / 41m
+part 1 2 6 6: 50 / 42m
+view
+part 1 2 6 6: 47 / 38
+part 1 2 6 6: 47 / 38
+part 1 2 6 6: 47 / 39
+part 1 2 6 6: 47 / 40
+part 1 2 6 6: 47 / 38
+part 1 2 6 6: 47 / 41
+part 1 2 6 6: 47 / 42
+anim
+view
+part 1 2 6 6: 4 / 8
+part 1 2 6 6: 4 / 8
+part 1 2 6 6: 4 / 10
+part 1 2 6 6: 4 / 9m
+part 1 2 6 6: 4 / 8
+part 1 2 6 6: 4 / 10m
+part 1 2 6 6: 4 / 9
+view
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29
+part 1 2 6 6: 22 / 30
+part 1 2 6 6: 21 / 28
+part 1 2 6 6: 22 / 29m
+part 1 2 6 6: 22 / 29
+view
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 24m
+part 1 2 6 6: 19 / 25m
+part 1 2 6 6: 18 / 23m
+part 1 2 6 6: 19 / 26m
+part 1 2 6 6: 19 / 27m
+view
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 24
+part 1 2 6 6: 17 / 25
+part 1 2 6 6: 16 / 23
+part 1 2 6 6: 17 / 26
+part 1 2 6 6: 17 / 27
+view
+part 1 2 6 6: 48m / 38m
+part 1 2 6 6: 48m / 38m
+part 1 2 6 6: 48m / 39m
+part 1 2 6 6: 48m / 40m
+part 1 2 6 6: 48m / 38m
+part 1 2 6 6: 48m / 41m
+part 1 2 6 6: 48m / 42m
+view
+part 1 2 6 6: 48 / 38
+part 1 2 6 6: 48 / 38
+part 1 2 6 6: 48 / 39
+part 1 2 6 6: 48 / 40
+part 1 2 6 6: 48 / 38
+part 1 2 6 6: 48 / 41
+part 1 2 6 6: 48 / 42
