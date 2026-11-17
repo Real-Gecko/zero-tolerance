@@ -1,0 +1,13 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Zero Tolerance",
+  "start": {
+    "program": ["zt.exe", "zt"],
+    "args": ["--data", "{install}/data"]
+  },
+  "saves": [
+    "{config}/ZeroTolerance/zt/save*.bin",
+    "{local}/ZeroTolerance/zt/save*.bin"
+  ]
+}
