@@ -1,5 +1,7 @@
 # Zero Tolerance for Windows and Linux
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 A native PC port of **Zero Tolerance**, the 1994 first-person shooter by Technopop for the
 Sega Mega Drive / Genesis. The game's 68000 code was translated by hand into C++ and runs on
 SDL3. It is not an emulator: there is no ROM and no emulated console at run time.
