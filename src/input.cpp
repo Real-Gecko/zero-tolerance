@@ -3,34 +3,47 @@
 namespace {
 uint16_t key_button(SDL_Scancode k) {
     switch (k) {
-    case SDL_SCANCODE_UP: case SDL_SCANCODE_W: return PAD_UP;
-    case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: return PAD_DOWN;
-    case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A: return PAD_LEFT;
-    case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D: return PAD_RIGHT;
+    case SDL_SCANCODE_UP: return PAD_UP;
+    case SDL_SCANCODE_DOWN: return PAD_DOWN;
+    case SDL_SCANCODE_LEFT: return PAD_LEFT;
+    case SDL_SCANCODE_RIGHT: return PAD_RIGHT;
     case SDL_SCANCODE_Z: return PAD_A;
     case SDL_SCANCODE_X: return PAD_B;
     case SDL_SCANCODE_C: return PAD_C;
     case SDL_SCANCODE_RETURN: return SDL_GetModState() & SDL_KMOD_ALT ? 0 : PAD_START; // Alt+Enter: fullscreen
-    case SDL_SCANCODE_TAB: return PAD_START;
+    default: return 0;
+    }
+}
+
+uint16_t key_action(SDL_Scancode k) {
+    switch (k) {
+    case SDL_SCANCODE_W: return ACTION_FORWARD;
+    case SDL_SCANCODE_S: return ACTION_BACK;
+    case SDL_SCANCODE_A: return ACTION_STRAFE_LEFT;
+    case SDL_SCANCODE_D: return ACTION_STRAFE_RIGHT;
+    case SDL_SCANCODE_SPACE: return ACTION_JUMP;
+    case SDL_SCANCODE_LCTRL: return ACTION_CROUCH;
+    case SDL_SCANCODE_TAB: return ACTION_MAP;
     default: return 0;
     }
 }
 } // namespace
 
 void Input::handle_event(const SDL_Event& e) {
-    if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat)
+    if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
         taps_ |= key_button(e.key.scancode);
+        action_taps_ |= key_action(e.key.scancode);
+    }
     if (e.type == SDL_EVENT_MOUSE_MOTION)
         mouse_x_ += e.motion.xrel;
-    // Left click fires (B), right click switches items (C).
-    uint16_t mb = 0;
+    uint8_t mb = 0;
     if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP)
-        mb = e.button.button == SDL_BUTTON_LEFT ? PAD_B : e.button.button == SDL_BUTTON_RIGHT ? PAD_C : 0;
+        mb = e.button.button == SDL_BUTTON_LEFT ? ACTION_FIRE : e.button.button == SDL_BUTTON_RIGHT ? ACTION_ITEM : 0;
     if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-        taps_ |= mb;
+        action_taps_ |= mb;
         mouse_held_ |= mb;
     }
-    if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) mouse_held_ &= uint16_t(~mb);
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) mouse_held_ &= uint8_t(~mb);
     if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad_)
         pad_ = SDL_OpenGamepad(e.gdevice.which);
     if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad_ && SDL_GetGamepadID(pad_) == e.gdevice.which) {
@@ -42,33 +55,42 @@ void Input::handle_event(const SDL_Event& e) {
 void Input::update() {
     // A tap counts as released last update, so it shows up as a press.
     prev_ = held_ & ~taps_;
-    held_ = taps_ | mouse_held_;
-    strafe_ = 0;
+    held_ = taps_;
     taps_ = 0;
+    actions_ = action_taps_ | mouse_held_;
+    action_taps_ = 0;
     int n;
     const bool* k = SDL_GetKeyboardState(&n);
-    uint16_t other = 0; // left/right from keys other than A/D
     for (int i = 0; i < n; i++) {
         if (!k[i]) continue;
-        uint16_t b = key_button(SDL_Scancode(i));
-        held_ |= b;
-        if (i == SDL_SCANCODE_A || i == SDL_SCANCODE_D) strafe_ |= b;
-        else other |= b;
+        held_ |= key_button(SDL_Scancode(i));
+        actions_ |= key_action(SDL_Scancode(i));
     }
     if (pad_) {
         auto b = [&](SDL_GamepadButton btn) { return SDL_GetGamepadButton(pad_, btn); };
-        Sint16 lx = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFTX);
-        Sint16 ly = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFTY);
-        if (b(SDL_GAMEPAD_BUTTON_DPAD_UP) || ly < -16000) held_ |= PAD_UP;
-        if (b(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || ly > 16000) held_ |= PAD_DOWN;
-        if (b(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -16000) held_ |= PAD_LEFT, other |= PAD_LEFT;
-        if (b(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > 16000) held_ |= PAD_RIGHT, other |= PAD_RIGHT;
-        if (b(SDL_GAMEPAD_BUTTON_WEST)) held_ |= PAD_A;
-        if (b(SDL_GAMEPAD_BUTTON_SOUTH)) held_ |= PAD_B;
+        auto axis = [&](SDL_GamepadAxis a) { return SDL_GetGamepadAxis(pad_, a); };
+        if (b(SDL_GAMEPAD_BUTTON_DPAD_UP)) held_ |= PAD_UP;
+        if (b(SDL_GAMEPAD_BUTTON_DPAD_DOWN)) held_ |= PAD_DOWN;
+        if (b(SDL_GAMEPAD_BUTTON_DPAD_LEFT)) held_ |= PAD_LEFT;
+        if (b(SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) held_ |= PAD_RIGHT;
+        if (b(SDL_GAMEPAD_BUTTON_WEST)) held_ |= PAD_B;
+        if (b(SDL_GAMEPAD_BUTTON_SOUTH)) held_ |= PAD_A;
         if (b(SDL_GAMEPAD_BUTTON_EAST)) held_ |= PAD_C;
-        if (b(SDL_GAMEPAD_BUTTON_START)) held_ |= PAD_START;
+        // The left stick works like WASD, the right stick like the mouse.
+        Sint16 lx = axis(SDL_GAMEPAD_AXIS_LEFTX), ly = axis(SDL_GAMEPAD_AXIS_LEFTY);
+        if (ly < -16000) actions_ |= ACTION_FORWARD;
+        if (ly > 16000) actions_ |= ACTION_BACK;
+        if (lx < -16000) actions_ |= ACTION_STRAFE_LEFT;
+        if (lx > 16000) actions_ |= ACTION_STRAFE_RIGHT;
+        Sint16 rx = axis(SDL_GAMEPAD_AXIS_RIGHTX);
+        if (rx < -8000 || rx > 8000) mouse_x_ += float(rx) / 32767 * 20;
+        if (b(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) actions_ |= ACTION_JUMP;
+        if (b(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) actions_ |= ACTION_CROUCH;
+        if (axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16000) actions_ |= ACTION_ITEM;
+        if (axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) actions_ |= ACTION_FIRE;
+        if (b(SDL_GAMEPAD_BUTTON_BACK)) actions_ |= ACTION_MAP;
+        if (b(SDL_GAMEPAD_BUTTON_START)) actions_ |= ACTION_START;
     }
-    strafe_ &= uint16_t(~other);
 }
 
 float Input::take_mouse_x() {

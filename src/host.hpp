@@ -30,11 +30,13 @@ extern int int_mask;
 // The pad buttons held, active high: bit 7 Start, 6 A, 5 C, 4 B, 3 Right,
 // 2 Left, 1 Down, 0 Up.
 uint8_t pad();
-// PC controls read by the player code (0xDAB8): the pad Left/Right bits held
-// through the strafe keys, and the mouse turn since the last call in player
-// angle units (512 per turn).
-uint8_t strafe_keys();
+// PC controls read by the player code (0xDAB8): the mouse turn since the
+// last call in player angle units (512 per turn).
 int mouse_turn();
+// Held PC action keys, apart from the pad: bit 0 jump, 1 crouch toggle,
+// 2 fire, 3 next item, 4 map, 5 forward, 6 back, 7 strafe left, 8 strafe right,
+// 9 gamepad Start.
+uint16_t action_keys();
 // A key or button went down since the last call; skips the boot cinematics.
 bool any_pressed();
 // Set by a screen that can be shown wider than 320 pixels: called before the

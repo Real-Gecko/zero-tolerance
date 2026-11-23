@@ -201,7 +201,7 @@ bool init(const Options& o) {
 
 void set_vblank_handler(void (*handler)()) { vblank_handler = handler; }
 
-uint8_t strafe_keys() { return uint8_t(input.strafe()); }
+uint16_t action_keys() { return input.actions(); }
 
 std::string save_path(int slot) {
     char* p = SDL_GetPrefPath("ZeroTolerance", "zt");
@@ -515,6 +515,7 @@ void frame() {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) quit();
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) any_press = true;
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) any_press = true;
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_RETURN &&
                 (e.key.mod & SDL_KMOD_ALT))
                 SDL_SetWindowFullscreen(window, !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));

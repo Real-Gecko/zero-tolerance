@@ -249,7 +249,7 @@ void DrawFlameThrower(uint16_t d0, uint16_t d1) {
         d4 = uint16_t(d4 - 2 * r);
         fire_step = uint16_t(fire_step + 1);
         bool used_up = false;
-        if (fire_step <= 3 && !st.dying && (pad_buttons & 0x10)) {
+        if (fire_step <= 3 && !st.dying && ((pad_buttons & 0x10) || (actions & 4))) {
             shot_sound(0x1E);
             if (!use_charge([] {
                     if (fire_step == 3) fire_step = 1;
@@ -324,7 +324,7 @@ void DrawFireBallGun(uint16_t d0, uint16_t d1) {
     put_sprite(d0, 0xB00, 0xA500, d1);
     if (st.dying) return;
     if (step == 3) {
-        if (pad_buttons & 0x10) {
+        if ((pad_buttons & 0x10) || (actions & 4)) {
             fire_step = 3;
             if (!use_charge([] {})) fire_step = 4;
         }
@@ -543,7 +543,7 @@ void UndoHeadBob() {
 // 0x11C2C: B switches weapons (0x12A70 fires); the weapon is lowered by
 // FF1058 while it changes, then drawn with the head bob.
 void UpdateWeapon() {
-    if (!st.dying && (pad_buttons & 0x10) && !(st.pad_prev & 0x10)) FireWeapon();
+    if (!st.dying && (((pad_buttons & 0x10) && !(st.pad_prev & 0x10)) || action_pressed(4))) FireWeapon();
     bool lowering = true;
     if (!fire_step && int8_t(next_weapon) >= 0) {
         uint16_t d0 = next_weapon;

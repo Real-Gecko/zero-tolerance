@@ -179,6 +179,9 @@ void RunDmaQueue() {
 void ReadPad() {
     st.pad_prev = st.pad_buttons;
     pad_buttons = host::pad();
+    actions_prev = actions;
+    actions = host::action_keys();
+    if ((actions & 512) && !start_is_menu) pad_buttons |= 0x80;
 }
 
 // 0xBAE: waits for the 3D view DMA, then writes count+1 words to the palette from src.
@@ -259,6 +262,7 @@ void ReadInput() {
         demo_mode = 3;
     }
     pad_buttons = demo_inputs()[st.demo_pos++];
+    actions = 0;
 }
 
 // 0xFC0: new game: health, lives and inventory, then the password.

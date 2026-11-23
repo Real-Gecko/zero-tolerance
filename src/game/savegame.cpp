@@ -60,8 +60,8 @@ uint32_t saved_slots() {
     return m;
 }
 
-// A host menu: Up/Down move, A/B/C/Start pick an enabled item, Esc backs out
-// (-1).
+// A host menu: Up/Down move, A/B/C/Start pick an enabled item, Esc (or the
+// gamepad's Start in gameplay) backs out (-1).
 int choose(const char* title, const std::vector<std::string>& items, uint32_t enabled, int sel) {
     int n = int(items.size());
     host::menu_show(title, items, enabled, sel);
@@ -69,7 +69,7 @@ int choose(const char* title, const std::vector<std::string>& items, uint32_t en
     for (;;) {
         host::frame();
         ReadPad();
-        if (host::take_menu_request()) {
+        if (host::take_menu_request() || (start_is_menu && action_pressed(512))) {
             host::menu_hide();
             return -1;
         }

@@ -174,7 +174,7 @@ void MapScreen() {
         }
         QueueSpriteListDma();
         auto& map_flags = st.map_request;
-        if ((map_flags & 1) && (pad_buttons & 0x80) && !(prev & 0x80)) {
+        if ((map_flags & 1) && (((pad_buttons & 0x80) && !(prev & 0x80)) || action_pressed(16))) {
             map_flags = uint8_t(map_flags & ~1);
         }
     } while (st.map_request);

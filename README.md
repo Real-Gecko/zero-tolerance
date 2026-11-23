@@ -40,15 +40,23 @@ Get the zip for your system from [Releases](../../releases):
 
 | Action | Keyboard and mouse | Gamepad |
 | --- | --- | --- |
-| Move, turn | Arrows, or W/S with the mouse | D-pad or left stick |
-| Strafe | A / D | |
-| Fire (B) | X or left click | South (A on Xbox) |
-| Switch item (C) | C or right click | East |
-| A button | Z | West |
-| Start / pause | Enter or Tab | Start |
+| Move, strafe | W / S, A / D | Left stick |
+| Turn | Mouse | Right stick |
+| D-pad | Arrows | D-pad |
+| Jump | Space | Left bumper |
+| Crouch (toggle) | Left Ctrl | Right bumper |
+| Fire | Left click | Right trigger |
+| Switch item | Right click | Left trigger |
+| Map | Tab | Select |
+| Pause menu | Escape | Start (in gameplay) |
+| Pad A / B / C | Z / X / C | South / West / East |
+| Pad Start | Enter | Start (outside gameplay) |
 | Fullscreen | Alt+Enter | |
 
-Escape releases the mouse, a click captures it again.
+The original pad is the arrows (or the gamepad's D-pad), Z/X/C (South/West/East) and
+Enter. Everything else is a separate PC control that works only in gameplay.
+
+Escape opens the pause menu and releases the mouse, a click captures it again.
 
 ## Command line
 

@@ -388,6 +388,7 @@ auto& speed = st.speed;
 auto& speed_target = st.speed_target;
 auto& strafe = st.strafe;
 auto& strafe_target = st.strafe_target;
+bool crouched = false; // crouch toggled on with the crouch key
 
 int16_t s16(uint16_t v) { return int16_t(v); }
 uint16_t asr(uint16_t v, int n) { return uint16_t(s16(v) >> n); }
@@ -499,9 +500,8 @@ bool move(Cell a1, uint16_t dx, uint16_t dy) {
 
 // 0xDAB8: player controls, turning, jumping, movement and collision.
 void PlayerControls() {
-    // PC controls: the strafe keys strafe instead of turning, the mouse turns.
-    uint8_t strafe_keys = host::strafe_keys();
-    uint8_t pad = uint8_t(pad_buttons & ~strafe_keys), prev = st.pad_prev;
+    // PC controls: WASD move and strafe, the mouse turns.
+    uint8_t pad = pad_buttons, prev = st.pad_prev;
     if (st.dying) {
         speed_target = 0;
         turn_target = 0;
@@ -509,7 +509,7 @@ void PlayerControls() {
         jump_target = 0xFFE4;
         crouch_time = 0x63;
     } else {
-        if ((pad & 0x20) && !(prev & 0x20)) NextWeapon();
+        if (((pad & 0x20) && !(prev & 0x20)) || action_pressed(8)) NextWeapon();
         turn_target = 0;
         speed_target = 0;
         strafe_target = 0;
@@ -535,10 +535,26 @@ void PlayerControls() {
             if (pad & 1) speed_target = st.character == 3 ? 0x2D : 0x28;
             if (pad & 2) speed_target = st.character == 3 ? 0xFFDD : 0xFFEC;
         }
+        if (actions & 32) speed_target = st.character == 3 ? 0x2D : 0x28;
+        if (actions & 64) speed_target = st.character == 3 ? 0xFFDD : 0xFFEC;
         if (s16(jump) <= 0) {
-            if (strafe_keys & 4) strafe_target = 0xFFD8;
-            if (strafe_keys & 8) strafe_target = 0x28;
+            if (actions & 128) strafe_target = 0xFFD8;
+            if (actions & 256) strafe_target = 0x28;
         }
+        // The jump key does A+Up, the crouch key toggles A+Down.
+        if (action_pressed(1) && s16(jump) <= 0) {
+            if (s16(jump) < 0) jump_target = 0;
+            else {
+                jump_speed = 9;
+                jump = 0;
+            }
+        }
+        if (action_pressed(2)) {
+            if (jump_target == 0xFFF0) jump_target = 0;
+            else if (s16(jump) <= 0) jump_target = 0xFFF0, crouched = true;
+        }
+        if (crouched && jump_target == 0xFFF0) crouch_time = 0x1E;
+        else crouched = false;
     }
     if (jump_target == 0xFFF0 && !(crouch_time = uint16_t(crouch_time - 1))) jump_target = 0;
     uint16_t d0 = jump_speed;

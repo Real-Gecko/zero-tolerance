@@ -303,7 +303,7 @@ uint32_t gameplay_frame() {
     st.sprite_link = 1;
     st.sprite_end = 0;
     RunFaceScripts();
-    if ((pad_buttons & 0x80) && !(st.pad_prev & 0x80)) st.map_request = st.map_request | 1;
+    if (((pad_buttons & 0x80) && !(st.pad_prev & 0x80)) || action_pressed(16)) st.map_request = st.map_request | 1;
     if (st.map_request) MapScreen();
     PlayerControls();
     RunEnemies();
@@ -411,15 +411,18 @@ loaded:
             draw_between(uint16_t(vblank_count - last) - 1);
             host::frame();
         }
-        // PC: Esc opens the save/load menu (not in attract mode).
-        if (!demo_mode && host::take_menu_request()) {
+        // PC: Esc or the gamepad's Start opens the save/load menu (not in attract mode).
+        start_is_menu = !demo_mode;
+        if (!demo_mode && (host::take_menu_request() || action_pressed(512))) {
             if (run_pause_menu() == 1) { // quit to title
+                start_is_menu = false;
                 StopMusic();
                 return 3;
             }
         }
         last = vblank_count;
         uint32_t next = gameplay_frame();
+        start_is_menu = false;
         if (next == 0x1442) continue;
         if (next == 0x1A40) break;
 

@@ -23,6 +23,12 @@ inline auto& fb_dma_pending = st.fb_dma_pending;
 inline auto& random_seed = st.random_seed;
 inline auto& sound_options = st.sound_options;
 inline auto& pad_buttons = st.pad_buttons;
+// PC: host::action_keys() at the last pad read and the read before.
+inline uint16_t actions = 0, actions_prev = 0;
+inline bool action_pressed(uint16_t bit) { return (actions & bit) && !(actions_prev & bit); }
+// PC: set while gameplay runs (not the attract demo); the gamepad's Start then
+// opens and closes the pause menu instead of pressing the pad's Start.
+inline bool start_is_menu = false;
 inline auto& demo_mode = st.demo_mode;
 inline auto& player_x = st.player_x;
 inline auto& player_y = st.player_y;
