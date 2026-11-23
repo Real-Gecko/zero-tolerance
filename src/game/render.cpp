@@ -66,7 +66,7 @@ struct {
 // PC: project_and_draw in the wide pass: the wall from edge A (u = 0) to
 // edge B (u = 1) clipped in floating point to the field of view of
 // hires::view_tan and to a near plane, then recorded.
-void project_wide(Tail tail) {
+bool project_wide(Tail tail) {
     float ad = float(view.a.depth), al = float(view.a.lateral);
     float bd = float(view.b.depth), bl = float(view.b.lateral);
     float t = hires::view_tan, u0 = 0, u1 = 1;
@@ -78,7 +78,7 @@ void project_wide(Tail tail) {
         return true;
     };
     if (!keep(t * ad + al, t * bd + bl) || !keep(t * ad - al, t * bd - bl) || !keep(ad - 64, bd - 64) || u0 >= u1)
-        return;
+        return false;
     auto end = [&](float u, float& x, float& h) {
         float d = ad + (bd - ad) * u;
         x = 64 + (al + (bl - al) * u) * 64 / d;
@@ -91,11 +91,12 @@ void project_wide(Tail tail) {
     wide_edges = {xa, ha, xb, hb};
     if (tail == Tail::Wall) DrawWallSpan();
     else if (tail == Tail::Portal) DrawPortalSpan();
+    return true;
 }
 
 // 0xCA4C: projects the two edges, clipping them to the view sides, then
-// draws the span (PC: project_wide).
-void project_and_draw(Tail tail) { project_wide(tail); }
+// draws the span (PC: project_wide). False when none of it is in view.
+bool project_and_draw(Tail tail) { return project_wide(tail); }
 
 // ---- wall emitters (0xC70E-0xC9A4) ----
 
@@ -715,7 +716,9 @@ void door_y() {
 // A door half: the strips from word strip of face 0x12, half the face's width.
 void half(uint16_t strip) {
     view.strip = strip;
-    project_and_draw(Tail::None);
+    // Out of view (e.g. behind the player): nothing to draw, and the edges
+    // still hold the last wall's.
+    if (!project_and_draw(Tail::None)) return;
     hires::scale_u(0.5f);
     DrawWallSpan();
 }
@@ -864,8 +867,10 @@ bool CellSpecialDispatch() {
         break;
     case 0x4B: doors3(0x0040407F, 0x7F004040, 0x80C0C000, 0x0080C0C0, 0x0040C000, 0x000040C0); break;
     case 0x30: {
-        // 0x9862: lift platform at height FF116F.
-        std::fill_n(view.sides, 8, uint8_t(uint8_t(st.stair_height) | 1));
+        // 0x9862: lift platform at height FF116F. PC: + 1 instead of | 1, the
+        // same for the even heights the game makes; the in-between views
+        // (level.cpp) also see odd ones.
+        std::fill_n(view.sides, 8, uint8_t(uint8_t(st.stair_height) + 1));
         cr.d3 = 1;
         break;
     }

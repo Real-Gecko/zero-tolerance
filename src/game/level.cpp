@@ -258,7 +258,8 @@ void draw_between(int num) {
     interpolate(player_y, prev.player_y, num, 0x180);
     interpolate(player_angle, prev.player_angle, num, 0x100, true);
     interpolate(st.view_z, prev.view_z, num, 0x100);
-    interpolate(st.stair_height, prev.stair_height, num, 0x100);
+    // A level change (stairs, lift) moves the height by 0x80 a level.
+    interpolate(st.stair_height, uint16_t(prev.stair_height - 0x80 * (cur_level - prev.cur_level)), num, 0x100);
     st.dir_x = kDirVectors[player_angle][0];
     st.dir_y = kDirVectors[player_angle][1];
     Enemy* e = first_object();
