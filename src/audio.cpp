@@ -1,93 +1,43 @@
 #include "audio.hpp"
+#include "music.hpp"
 
 #include <SDL3/SDL.h>
-#include <fluidsynth.h>
 
+#include <cstdio>
 #include <fstream>
 #include <map>
 #include <vector>
 
 namespace {
 
-constexpr int kRate = 44100;
+constexpr uint32_t kChipClock = 7670453; // NTSC 68000 clock
 
-// Finds the ticks of "loopStart" / "loopEnd" marker meta events in a MIDI file.
-void find_loop_markers(const std::string& path, int& start, int& end) {
-    start = end = -1;
+std::vector<uint8_t> load(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)), {});
-    size_t p = 14;
-    auto u32 = [&](size_t i) { return uint32_t(d[i] << 24 | d[i + 1] << 16 | d[i + 2] << 8 | d[i + 3]); };
-    while (p + 8 <= d.size()) {
-        uint32_t len = u32(p + 4);
-        size_t q = p + 8, e = std::min(d.size(), q + len);
-        bool is_track = d[p] == 'M' && d[p + 1] == 'T' && d[p + 2] == 'r' && d[p + 3] == 'k';
-        int tick = 0;
-        uint8_t status = 0;
-        auto var = [&]() {
-            uint32_t v = 0;
-            while (q < e) {
-                uint8_t b = d[q++];
-                v = (v << 7) | (b & 127);
-                if (!(b & 128))
-                    break;
-            }
-            return v;
-        };
-        while (is_track && q < e) {
-            tick += var();
-            if (q >= e)
-                break;
-            uint8_t b = d[q];
-            if (b == 0xFF) {
-                uint8_t type = d[q + 1];
-                q += 2;
-                uint32_t n = var();
-                std::string text(d.begin() + q, d.begin() + std::min(e, q + n));
-                if (type == 6 && text == "loopStart") start = tick;
-                if (type == 6 && text == "loopEnd") end = tick;
-                q += n;
-            } else if (b == 0xF0 || b == 0xF7) {
-                q++;
-                q += var();
-            } else {
-                if (b & 0x80) {
-                    status = b;
-                    q++;
-                }
-                int hi = status >> 4;
-                q += (hi == 0xC || hi == 0xD) ? 1 : 2;
-            }
-        }
-        p = e;
-    }
+    if (!f) SDL_Log("cannot load %s", path.c_str());
+    return {std::istreambuf_iterator<char>(f), {}};
 }
 
 } // namespace
 
 struct Audio::Impl {
     SDL_AudioStream* stream = nullptr;
-    fluid_settings_t* settings = nullptr;
-    fluid_synth_t* synth = nullptr;
-    fluid_player_t* player = nullptr;
     SDL_Mutex* mutex = nullptr;
+    ymfm::ymfm_interface chip_intf;
+    ymfm::ym2612 chip{chip_intf};
+    std::unique_ptr<Music> music;
+    std::string dir;
+    int rate = 0;      // the chip's sample rate, clock / 144
+    int tick_phase = 0; // the driver runs its sequencer at 60 Hz
     struct Voice {
-        std::shared_ptr<std::vector<float>> data; // stereo float at kRate
+        std::shared_ptr<std::vector<float>> data; // stereo float at rate
         size_t pos = 0;
         int channel = -1;
+        float gain = 1.0f;
     };
     std::vector<Voice> voices;
     std::map<std::string, std::shared_ptr<std::vector<float>>> cache;
-    int loop_start = -1, loop_end = -1;
-    float music_vol = 0.8f, sfx_vol = 1.0f;
-    std::vector<float> buf, mbuf;
-
-    static int on_tick(void* data, int tick) {
-        Impl* self = static_cast<Impl*>(data);
-        if (self->loop_end > 0 && tick >= self->loop_end)
-            fluid_player_seek(self->player, std::max(self->loop_start, 0));
-        return FLUID_OK;
-    }
+    std::vector<float> buf;
 
     static void SDLCALL callback(void* userdata, SDL_AudioStream* s, int additional, int) {
         Impl* self = static_cast<Impl*>(userdata);
@@ -95,16 +45,22 @@ struct Audio::Impl {
         if (frames <= 0)
             return;
         self->buf.assign(size_t(frames) * 2, 0.0f);
-        self->mbuf.assign(size_t(frames) * 2, 0.0f);
         SDL_LockMutex(self->mutex);
-        if (self->player && fluid_player_get_status(self->player) == FLUID_PLAYER_PLAYING)
-            fluid_synth_write_float(self->synth, frames, self->mbuf.data(), 0, 2, self->mbuf.data(), 1, 2);
-        for (size_t i = 0; i < self->buf.size(); i++)
-            self->buf[i] = self->mbuf[i] * self->music_vol;
+        for (int i = 0; i < frames; i++) {
+            if ((self->tick_phase += 60) >= self->rate) {
+                self->tick_phase -= self->rate;
+                self->music->tick();
+            }
+            ymfm::ym2612::output_data out;
+            self->chip.generate(&out);
+            // The music level of DGen (4 times MAME's).
+            self->buf[i * 2] = out.data[0] / 16384.0f;
+            self->buf[i * 2 + 1] = out.data[1] / 16384.0f;
+        }
         for (auto& v : self->voices) {
             size_t n = std::min(self->buf.size(), v.data->size() - v.pos);
             for (size_t i = 0; i < n; i++)
-                self->buf[i] += (*v.data)[v.pos + i] * self->sfx_vol;
+                self->buf[i] += (*v.data)[v.pos + i] * v.gain;
             v.pos += n;
         }
         std::erase_if(self->voices, [](const Voice& v) { return v.pos >= v.data->size(); });
@@ -118,33 +74,18 @@ Audio::Audio() : impl_(std::make_unique<Impl>()) {}
 Audio::~Audio() {
     if (impl_->stream)
         SDL_DestroyAudioStream(impl_->stream);
-    if (impl_->player)
-        delete_fluid_player(impl_->player);
-    if (impl_->synth)
-        delete_fluid_synth(impl_->synth);
-    if (impl_->settings)
-        delete_fluid_settings(impl_->settings);
     if (impl_->mutex)
         SDL_DestroyMutex(impl_->mutex);
 }
 
-bool Audio::init(const std::string& soundfont) {
+bool Audio::init(const std::string& data_dir) {
     Impl& m = *impl_;
+    m.dir = data_dir + "/";
     m.mutex = SDL_CreateMutex();
-    // FluidSynth only renders samples here (SDL plays them). Without this,
-    // new_fluid_settings() probes every ALSA/JACK/OSS device and logs errors.
-    static const char* drivers[] = {"file", nullptr};
-    fluid_audio_driver_register(drivers);
-    m.settings = new_fluid_settings();
-    fluid_settings_setnum(m.settings, "synth.sample-rate", kRate);
-    fluid_settings_setstr(m.settings, "player.timing-source", "sample");
-    // The MIDI files leave headroom for the per-patch levels (extract_sound.py
-    // GM_GAIN); this is the default 0.2 raised to make up for it.
-    fluid_settings_setnum(m.settings, "synth.gain", 0.38);
-    m.synth = new_fluid_synth(m.settings);
-    if (fluid_synth_sfload(m.synth, soundfont.c_str(), 1) == FLUID_FAILED)
-        SDL_Log("cannot load soundfont %s; music disabled", soundfont.c_str());
-    SDL_AudioSpec spec{SDL_AUDIO_F32, 2, kRate};
+    m.chip.reset();
+    m.rate = int(m.chip.sample_rate(kChipClock));
+    m.music = std::make_unique<Music>(m.chip, load(m.dir + "music/patches.bin"));
+    SDL_AudioSpec spec{SDL_AUDIO_F32, 2, m.rate};
     m.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, Impl::callback, &m);
     if (!m.stream) {
         SDL_Log("audio: %s", SDL_GetError());
@@ -154,45 +95,37 @@ bool Audio::init(const std::string& soundfont) {
     return true;
 }
 
-void Audio::play_music(const std::string& path) {
+void Audio::music_tempo(int bpm) {
+    SDL_LockMutex(impl_->mutex);
+    impl_->music->tempo(bpm);
+    SDL_UnlockMutex(impl_->mutex);
+}
+
+void Audio::play_music(int seq) {
     Impl& m = *impl_;
-    if (!m.synth)
+    char name[32];
+    std::snprintf(name, sizeof name, "music/seq%02d.bin", seq);
+    std::vector<uint8_t> data = load(m.dir + name);
+    if (data.empty())
         return;
-    int ls, le;
-    find_loop_markers(path, ls, le);
     SDL_LockMutex(m.mutex);
-    if (m.player) {
-        fluid_player_stop(m.player);
-        delete_fluid_player(m.player);
-    }
-    fluid_synth_system_reset(m.synth);
-    m.player = new_fluid_player(m.synth);
-    m.loop_start = ls;
-    m.loop_end = le;
-    fluid_player_set_tick_callback(m.player, Impl::on_tick, &m);
-    if (le < 0)
-        fluid_player_set_loop(m.player, -1);
-    if (fluid_player_add(m.player, path.c_str()) == FLUID_OK)
-        fluid_player_play(m.player);
-    else
-        SDL_Log("cannot load music %s", path.c_str());
+    m.music->start(seq, data);
     SDL_UnlockMutex(m.mutex);
+}
+
+void Audio::stop_music(int seq) {
+    SDL_LockMutex(impl_->mutex);
+    impl_->music->stop(seq);
+    SDL_UnlockMutex(impl_->mutex);
 }
 
 void Audio::stop_music() {
-    Impl& m = *impl_;
-    SDL_LockMutex(m.mutex);
-    if (m.player) {
-        fluid_player_stop(m.player);
-        delete_fluid_player(m.player);
-        m.player = nullptr;
-    }
-    if (m.synth)
-        fluid_synth_all_sounds_off(m.synth, -1);
-    SDL_UnlockMutex(m.mutex);
+    SDL_LockMutex(impl_->mutex);
+    impl_->music->stop_all();
+    SDL_UnlockMutex(impl_->mutex);
 }
 
-void Audio::play_sfx(const std::string& path, int channel) {
+void Audio::play_sfx(const std::string& path, int channel, float gain) {
     Impl& m = *impl_;
     auto it = m.cache.find(path);
     if (it == m.cache.end()) {
@@ -201,7 +134,7 @@ void Audio::play_sfx(const std::string& path, int channel) {
         Uint32 len = 0;
         std::shared_ptr<std::vector<float>> pcm;
         if (SDL_LoadWAV(path.c_str(), &spec, &wav, &len)) {
-            SDL_AudioSpec dst{SDL_AUDIO_F32, 2, kRate};
+            SDL_AudioSpec dst{SDL_AUDIO_F32, 2, m.rate};
             Uint8* out = nullptr;
             int outlen = 0;
             if (SDL_ConvertAudioSamples(&spec, wav, int(len), &dst, &out, &outlen)) {
@@ -219,7 +152,7 @@ void Audio::play_sfx(const std::string& path, int channel) {
     SDL_LockMutex(m.mutex);
     if (channel >= 0)
         std::erase_if(m.voices, [&](const Impl::Voice& v) { return v.channel == channel; });
-    m.voices.push_back({it->second, 0, channel});
+    m.voices.push_back({it->second, 0, channel, gain});
     SDL_UnlockMutex(m.mutex);
 }
 

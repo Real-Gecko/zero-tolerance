@@ -13,7 +13,6 @@ int main(int argc, char** argv) {
         std::string k = argv[i];
         auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
         if (k == "--data") o.data = next();
-        else if (k == "--soundfont") o.soundfont = next();
         else if (k == "--scale") o.scale = std::atoi(next().c_str());
         else if (k == "--plan") o.plan = next();
         else if (k == "--seed") o.seed = std::strtoll(next().c_str(), nullptr, 0);

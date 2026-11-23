@@ -12,7 +12,6 @@ static Audio* audio = nullptr;
 static std::string dir;
 static int patch[16];
 static int rate[16];
-static int playing_seq = -1;
 
 static bool exists(const std::string& path) {
     SDL_PathInfo info;
@@ -25,19 +24,19 @@ void init(Audio* a, const std::string& data_dir) {
     for (int& r : rate) r = 4;
 }
 
+void tempo(int bpm) {
+    if (audio) audio->music_tempo(bpm);
+}
+
 void start_seq(int seq) {
-    char name[32];
-    std::snprintf(name, sizeof name, "music/seq%02d.mid", seq);
-    playing_seq = seq;
-    if (audio) audio->play_music(dir + name);
+    if (audio) audio->play_music(seq);
 }
 
 void stop_seq(int seq) {
-    if (seq == playing_seq) stop_all();
+    if (audio) audio->stop_music(seq);
 }
 
 void stop_all() {
-    playing_seq = -1;
     if (audio) audio->stop_music();
 }
 
@@ -58,7 +57,10 @@ void note_on(int ch, int note) {
         std::snprintf(name, sizeof name, "sfx/fm_p%02d_n%02d.wav", patch[ch], note);
     }
     std::string path = dir + name;
-    if (exists(path)) audio->play_sfx(path, ch);
+    // DGen's levels: a full-scale DAC sample is 0.375 of the output; the FM
+    // effects were recorded in MAME, which is 4 times quieter.
+    float gain = ch == 15 ? 0.375f : 4.0f;
+    if (exists(path)) audio->play_sfx(path, ch, gain);
 }
 
 void note_off(int ch, int) {

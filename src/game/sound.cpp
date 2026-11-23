@@ -26,8 +26,11 @@ void GemsPlaySound(uint16_t id) {
     uint8_t type = e[0], a = e[1], b = e[2];
     uint16_t opts = sound_options;
     switch (type) {
-    case 0: // music; b is the tempo, already in the MIDI file
-        if (opts & 1) md::gems::start_seq(a);
+    case 0: // music: tempo b, sequence a
+        if (opts & 1) {
+            md::gems::tempo(b);
+            md::gems::start_seq(a);
+        }
         break;
     case 1: { // FM/PSG effect on channel 13 or 14, alternating
         if (!(opts & 4)) break;

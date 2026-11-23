@@ -8,19 +8,6 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(SDL3 REQUIRED CONFIG)
-if(WIN32)
-  # The official FluidSynth Windows release: its .pc and CMake config point at
-  # the CI paths and dependencies it was built with.
-  find_path(FLUIDSYNTH_INCLUDE_DIR fluidsynth.h REQUIRED)
-  find_library(FLUIDSYNTH_LIBRARY NAMES fluidsynth-3 REQUIRED)
-  add_library(fluidsynth INTERFACE)
-  target_include_directories(fluidsynth INTERFACE ${FLUIDSYNTH_INCLUDE_DIR})
-  target_link_libraries(fluidsynth INTERFACE ${FLUIDSYNTH_LIBRARY})
-else()
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(FLUIDSYNTH REQUIRED IMPORTED_TARGET fluidsynth)
-  add_library(fluidsynth ALIAS PkgConfig::FLUIDSYNTH)
-endif()
 
 file(GLOB ZT_GAME_SOURCES CONFIGURE_DEPENDS src/game/*.cpp)
 add_executable(zt
@@ -28,12 +15,18 @@ add_executable(zt
   src/host.cpp
   src/assets.cpp
   src/audio.cpp
+  src/music.cpp
+  src/ymfm/ymfm_opn.cpp
+  src/ymfm/ymfm_adpcm.cpp
+  src/ymfm/ymfm_ssg.cpp
   src/input.cpp
   src/md/gems.cpp
   ${ZT_GAME_SOURCES}
 )
 target_compile_options(zt PRIVATE -Wall -Wextra)
-target_link_libraries(zt PRIVATE SDL3::SDL3 fluidsynth)
+set_source_files_properties(src/audio.cpp src/music.cpp src/ymfm/ymfm_opn.cpp src/ymfm/ymfm_adpcm.cpp
+  src/ymfm/ymfm_ssg.cpp PROPERTIES COMPILE_OPTIONS -Wno-unused-parameter)
+target_link_libraries(zt PRIVATE SDL3::SDL3)
 if(WIN32)
   # No console window; no MinGW runtime DLLs to ship; no debug info from the
   # static MinGW libraries.

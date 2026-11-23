@@ -151,7 +151,6 @@ static void run_plan() {
 
 bool init(const Options& o) {
     opt = o;
-    if (opt.soundfont.empty()) opt.soundfont = opt.data + "/gm.sf2";
     assets::init(opt.data);
 
     if (!opt.plan.empty()) {
@@ -192,7 +191,7 @@ bool init(const Options& o) {
         SDL_SetTextureScaleMode(hud_texture, SDL_SCALEMODE_PIXELART); // fractional panel scale
         SDL_SetTextureScaleMode(menu_texture, SDL_SCALEMODE_PIXELART);
         audio = new Audio;
-        if (audio->init(opt.soundfont)) md::gems::init(audio, opt.data);
+        if (audio->init(opt.data)) md::gems::init(audio, opt.data);
     }
     game::display::reset();
     game::textures::load(opt.data);

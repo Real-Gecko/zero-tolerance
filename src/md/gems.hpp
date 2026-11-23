@@ -9,6 +9,7 @@ class Audio;
 namespace md::gems {
 
 void init(Audio* audio, const std::string& data_dir);
+void tempo(int bpm);
 void start_seq(int seq);
 void stop_seq(int seq);
 void stop_all();

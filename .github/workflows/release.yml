@@ -17,7 +17,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ make curl unzip zip mingw-w64 libfluidsynth-dev libxtst-dev
+            cmake g++ make curl zip mingw-w64 libxtst-dev
 
       # Ubuntu 24.04 has no SDL3 package; the Linux zt only needs it to link.
       - name: Build SDL3
@@ -38,7 +38,7 @@ jobs:
           win=zt-$GITHUB_REF_NAME-Windows-x64
           linux=zt-$GITHUB_REF_NAME-Linux-x64
           mkdir $win $linux
-          cp -r zt.exe SDL3.dll libfluidsynth-3.dll sndfile.dll data README.md recomplauncher.json $win
+          cp -r zt.exe SDL3.dll data README.md recomplauncher.json $win
           cp -r zt data README.md recomplauncher.json $linux
           zip -r $win.zip $win
           tar czf $linux.tar.gz $linux

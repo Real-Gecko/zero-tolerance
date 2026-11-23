@@ -9,7 +9,6 @@ namespace host {
 
 struct Options {
     std::string data = "data";
-    std::string soundfont; // default: gm.sf2 in data
     int scale = 3;
     std::string plan;   // test plan, same format as tools/mame/harness.lua
     bool headless = false; // no window, no audio, no frame pacing
