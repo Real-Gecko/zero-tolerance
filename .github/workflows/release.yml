@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
 
@@ -17,15 +17,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ make curl zip mingw-w64 libxtst-dev
-
-      # Ubuntu 24.04 has no SDL3 package; the Linux zt only needs it to link.
-      - name: Build SDL3
-        run: |
-          curl -fL https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz | tar xz -C /tmp
-          cmake -S /tmp/SDL3-3.4.20 -B /tmp/sdl3-build -DCMAKE_BUILD_TYPE=Release -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
-          cmake --build /tmp/sdl3-build -j
-          sudo cmake --install /tmp/sdl3-build
+            cmake g++ make curl zip mingw-w64 libsdl3-dev
 
       - name: Build Linux
         run: make
